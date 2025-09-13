@@ -51,7 +51,7 @@ export async function GET() {
       ?.filter((t: any) => t.first_response_time)
       .map((t: any) => t.first_response_time!) || []
     const frtMedian = frtValues.length > 0 
-      ? frtValues.sort((a, b) => a - b)[Math.floor(frtValues.length / 2)]
+      ? frtValues.sort((a: number, b: number) => a - b)[Math.floor(frtValues.length / 2)]
       : 0
 
     // Average Handle Time (resolution time)
@@ -148,7 +148,7 @@ async function getWeeklyTrend(supabase: any, metric: string) {
           .not('first_response_time', 'is', null)
 
         if (frtTickets && frtTickets.length > 0) {
-          const values = frtTickets.map((t: any) => t.first_response_time!).sort((a, b) => a - b)
+          const values = frtTickets.map((t: any) => t.first_response_time!).sort((a: number, b: number) => a - b)
           value = values[Math.floor(values.length / 2)]
         }
         break
