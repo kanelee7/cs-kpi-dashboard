@@ -86,8 +86,8 @@ The dashboard uses two main tables:
 1. Push your code to GitHub
 2. Connect your repository to Vercel
 3. Add environment variables in Vercel dashboard:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_SUPABASE_URL_2`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY_2`
 4. Deploy!
 
 ### Manual Deployment
@@ -101,8 +101,8 @@ npm start
 
 | Variable | Description |
 |----------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Your Supabase anonymous key |
+| `NEXT_PUBLIC_SUPABASE_URL_2` | Your Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY_2` | Your Supabase anonymous key |
 
 ## Contributing
 

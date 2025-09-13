@@ -3,8 +3,8 @@ import { NextResponse } from 'next/server'
 export async function GET() {
   try {
     // Check if Supabase is configured
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL_2
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_2
 
     if (!supabaseUrl || !supabaseAnonKey) {
       // Return sample data if Supabase is not configured

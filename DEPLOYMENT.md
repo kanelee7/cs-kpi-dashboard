@@ -20,8 +20,8 @@
 2. Go to [vercel.com](https://vercel.com) and sign in
 3. Click "New Project" and import your GitHub repository
 4. In the Environment Variables section, add:
-   - `NEXT_PUBLIC_SUPABASE_URL`: Your Supabase project URL
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Your Supabase anon key
+   - `NEXT_PUBLIC_SUPABASE_URL_2`: Your Supabase project URL
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY_2`: Your Supabase anon key
 5. Click "Deploy"
 
 ### Step 4: Verify Deployment
@@ -42,8 +42,8 @@
 2. Install dependencies: `npm install`
 3. Create `.env.local` with your Supabase credentials:
    ```
-   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   NEXT_PUBLIC_SUPABASE_URL_2=your_supabase_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY_2=your_supabase_anon_key
    ```
 4. Run development server: `npm run dev`
 5. Open [http://localhost:3000](http://localhost:3000)
@@ -71,8 +71,8 @@
 
 Make sure these are set in both local development and production:
 
-- `NEXT_PUBLIC_SUPABASE_URL`: Your Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Your Supabase anonymous/public key
+- `NEXT_PUBLIC_SUPABASE_URL_2`: Your Supabase project URL
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY_2`: Your Supabase anonymous/public key
 
 ## Production Considerations
 
