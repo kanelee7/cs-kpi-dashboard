@@ -44,7 +44,7 @@ export async function GET() {
     const firstContactResolved = tickets?.filter(t => t.first_contact_resolved) || []
     
     // Weekly tickets trend (last 5 weeks)
-    const weeklyTickets = await getWeeklyTicketsTrend()
+    const weeklyTickets = await getWeeklyTicketsTrend(supabase)
     
     // FRT Median
     const frtValues = tickets
@@ -75,10 +75,10 @@ export async function GET() {
       : 0
 
     // Weekly trends for charts
-    const frtTrend = await getWeeklyTrend('first_response_time')
-    const ahtTrend = await getWeeklyTrend('resolution_time')
-    const fcrTrend = await getWeeklyTrend('fcr_rate')
-    const csatTrend = await getWeeklyTrend('csat_rating')
+    const frtTrend = await getWeeklyTrend(supabase, 'first_response_time')
+    const ahtTrend = await getWeeklyTrend(supabase, 'resolution_time')
+    const fcrTrend = await getWeeklyTrend(supabase, 'fcr_rate')
+    const csatTrend = await getWeeklyTrend(supabase, 'csat_rating')
 
     const kpis = {
       weeklyTicketsIn: weeklyTickets.in,
@@ -102,7 +102,7 @@ export async function GET() {
   }
 }
 
-async function getWeeklyTicketsTrend() {
+async function getWeeklyTicketsTrend(supabase: any) {
   const weeks = []
   for (let i = 4; i >= 0; i--) {
     const startDate = new Date()
@@ -128,7 +128,7 @@ async function getWeeklyTicketsTrend() {
   }
 }
 
-async function getWeeklyTrend(metric: string) {
+async function getWeeklyTrend(supabase: any, metric: string) {
   const weeks = []
   for (let i = 4; i >= 0; i--) {
     const startDate = new Date()
