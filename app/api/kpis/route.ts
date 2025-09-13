@@ -40,30 +40,30 @@ export async function GET() {
 
     // Calculate KPIs
     const totalTickets = tickets?.length || 0
-    const resolvedTickets = tickets?.filter(t => t.resolved_at) || []
-    const firstContactResolved = tickets?.filter(t => t.first_contact_resolved) || []
+    const resolvedTickets = tickets?.filter((t: any) => t.resolved_at) || []
+    const firstContactResolved = tickets?.filter((t: any) => t.first_contact_resolved) || []
     
     // Weekly tickets trend (last 5 weeks)
     const weeklyTickets = await getWeeklyTicketsTrend(supabase)
     
     // FRT Median
     const frtValues = tickets
-      ?.filter(t => t.first_response_time)
-      .map(t => t.first_response_time!) || []
+      ?.filter((t: any) => t.first_response_time)
+      .map((t: any) => t.first_response_time!) || []
     const frtMedian = frtValues.length > 0 
       ? frtValues.sort((a, b) => a - b)[Math.floor(frtValues.length / 2)]
       : 0
 
     // Average Handle Time (resolution time)
     const resolutionTimes = resolvedTickets
-      .filter(t => t.resolved_at)
-      .map(t => {
+      .filter((t: any) => t.resolved_at)
+      .map((t: any) => {
         const created = new Date(t.created_at)
         const resolved = new Date(t.resolved_at!)
         return (resolved.getTime() - created.getTime()) / (1000 * 60) // minutes
       })
     const avgHandleTime = resolutionTimes.length > 0
-      ? resolutionTimes.reduce((a, b) => a + b, 0) / resolutionTimes.length
+      ? resolutionTimes.reduce((a: number, b: number) => a + b, 0) / resolutionTimes.length
       : 0
 
     // FCR Rate
@@ -71,7 +71,7 @@ export async function GET() {
 
     // CSAT Average
     const csatAverage = csatData && csatData.length > 0
-      ? csatData.reduce((sum, item) => sum + item.rating, 0) / csatData.length
+      ? csatData.reduce((sum: number, item: any) => sum + item.rating, 0) / csatData.length
       : 0
 
     // Weekly trends for charts
@@ -117,7 +117,7 @@ async function getWeeklyTicketsTrend(supabase: any) {
       .lt('created_at', endDate.toISOString())
 
     const inCount = tickets?.length || 0
-    const resolvedCount = tickets?.filter(t => t.resolved_at)?.length || 0
+    const resolvedCount = tickets?.filter((t: any) => t.resolved_at)?.length || 0
 
     weeks.push({ in: inCount, resolved: resolvedCount })
   }
@@ -148,7 +148,7 @@ async function getWeeklyTrend(supabase: any, metric: string) {
           .not('first_response_time', 'is', null)
 
         if (frtTickets && frtTickets.length > 0) {
-          const values = frtTickets.map(t => t.first_response_time!).sort((a, b) => a - b)
+          const values = frtTickets.map((t: any) => t.first_response_time!).sort((a, b) => a - b)
           value = values[Math.floor(values.length / 2)]
         }
         break
@@ -162,12 +162,12 @@ async function getWeeklyTrend(supabase: any, metric: string) {
           .not('resolved_at', 'is', null)
 
         if (resTickets && resTickets.length > 0) {
-          const times = resTickets.map(t => {
+          const times = resTickets.map((t: any) => {
             const created = new Date(t.created_at)
             const resolved = new Date(t.resolved_at!)
             return (resolved.getTime() - created.getTime()) / (1000 * 60) // minutes
           })
-          value = times.reduce((a, b) => a + b, 0) / times.length
+          value = times.reduce((a: number, b: number) => a + b, 0) / times.length
         }
         break
 
@@ -179,7 +179,7 @@ async function getWeeklyTrend(supabase: any, metric: string) {
           .lt('created_at', endDate.toISOString())
 
         if (fcrTickets && fcrTickets.length > 0) {
-          const resolved = fcrTickets.filter(t => t.first_contact_resolved).length
+          const resolved = fcrTickets.filter((t: any) => t.first_contact_resolved).length
           value = (resolved / fcrTickets.length) * 100
         }
         break
@@ -192,7 +192,7 @@ async function getWeeklyTrend(supabase: any, metric: string) {
           .lt('created_at', endDate.toISOString())
 
         if (csatData && csatData.length > 0) {
-          value = csatData.reduce((sum, item) => sum + item.rating, 0) / csatData.length
+          value = csatData.reduce((sum: number, item: any) => sum + item.rating, 0) / csatData.length
         }
         break
     }
