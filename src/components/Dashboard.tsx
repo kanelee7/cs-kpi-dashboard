@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -183,13 +183,13 @@ const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: nu
                   <div className="space-y-1">
                     <div className="flex items-center justify-between min-w-[120px]">
                       <div className="flex items-center">
-                        <span className="text-[#CCCCCC] mr-2">📥 In:</span>
+                        <span className="text-[#CCCCCC] mr-2">In:</span>
                       </div>
                       <span className="text-[#5CD6C0] font-bold">{inValue}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center">
-                        <span className="text-[#CCCCCC] mr-2">✅ Resolved:</span>
+                        <span className="text-[#CCCCCC] mr-2">Resolved:</span>
                       </div>
                       <span className="text-[#E5B567] font-bold">{resolvedValue}</span>
                     </div>
@@ -351,7 +351,7 @@ const FRTDistributionChart: React.FC = () => {
 
   return (
     <div className="bg-[#232424] rounded-xl p-6 shadow-lg">
-      <h3 className="text-lg font-semibold text-white mb-4">FRT Response Time Distribution</h3>
+      <h3 className="text-lg font-semibold text-white mb-4">Tickets by First Reply Time Brackets</h3>
       <div className="space-y-3">
         {weeks.map((week, weekIndex) => (
           <div
@@ -414,7 +414,7 @@ const WeeklyTicketBar: React.FC<{
 
   return (
     <div 
-      className="relative flex-1 flex flex-col items-center space-y-1"
+      className="relative flex-1 flex flex-col items-center"
       onMouseEnter={() => setHoveredBar(index)}
       onMouseLeave={() => setHoveredBar(null)}
     >
@@ -423,20 +423,22 @@ const WeeklyTicketBar: React.FC<{
           <div className="space-y-1">
             <div className="flex items-center justify-between min-w-[120px]">
               <div className="flex items-center">
-                <span className="text-[#CCCCCC] mr-2">📥 In:</span>
+                <span className="text-[#CCCCCC] mr-2">In:</span>
               </div>
               <span className="text-[#5CD6C0] font-bold">{inValue}</span>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center">
-                <span className="text-[#CCCCCC] mr-2">✅ Resolved:</span>
+                <span className="text-[#CCCCCC] mr-2">Resolved:</span>
               </div>
               <span className="text-[#E5B567] font-bold">{resolvedValue}</span>
             </div>
           </div>
         </div>
       )}
-      <div className="w-full flex space-x-2 max-w-12">
+      
+      {/* 막대 컨테이너 - X축에 맞춰 정렬 */}
+      <div className="w-full flex space-x-2 max-w-12" style={{ height: '120px', alignItems: 'flex-end' }}>
         <div
           className={`flex-1 bg-[#4FBDBA] rounded-t transition-all duration-300 hover:bg-[#4FBDBA]/80 ${isCurrentWeek ? 'opacity-50' : ''}`}
           style={{ height: `${(inValue / maxValue) * 120}px` }}
@@ -446,7 +448,9 @@ const WeeklyTicketBar: React.FC<{
           style={{ height: `${(resolvedValue / maxValue) * 120}px` }}
         />
       </div>
-      <span className={`text-xs text-gray-500 ${isCurrentWeek ? 'opacity-50' : ''}`}>
+      
+      {/* 주간 라벨 */}
+      <span className={`text-xs text-gray-500 mt-1 ${isCurrentWeek ? 'opacity-50' : ''}`}>
         {weekLabel}
       </span>
     </div>
@@ -502,20 +506,24 @@ const Sidebar: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, o
 export default function Dashboard() {
   const [isCompact, setIsCompact] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [selectedBrand, setSelectedBrand] = useState('All Brands');
+  const [selectedBrand, setSelectedBrand] = useState('all');
   const [kpiData, setKpiData] = useState<KPIData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const brands = ['All Brands', 'Brand A', 'Brand B', 'Brand C'];
+  const brands = [
+    { value: 'all', label: 'All Brands' },
+    { value: 'brand-a', label: 'League of Kingdoms' },
+    { value: 'brand-b', label: 'LOK Chronicle' },
+    { value: 'brand-c', label: 'LOK Hunters' },
+    { value: 'brand-d', label: 'Arena-Z' },
+    { value: 'brand-e', label: 'The New Order' }
+  ];
 
-  useEffect(() => {
-    fetchKPIData();
-  }, []);
-
-  const fetchKPIData = async () => {
+  const fetchKPIData = useCallback(async (brand: string = selectedBrand) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/kpis');
+      const url = brand === 'all' ? '/api/kpis' : `/api/kpis?brand=${brand}`;
+      const response = await fetch(url);
       const data = await response.json();
       setKpiData(data);
     } catch (error) {
@@ -523,27 +531,34 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedBrand]);
+
+  useEffect(() => {
+    fetchKPIData();
+  }, [fetchKPIData]);
 
   const fcrBreakdownData = [
     {
       title: 'One-touch',
-      value: '892',
-      percentage: '75.0%',
+      value: kpiData?.fcrBreakdown?.oneTouch?.toString() || '0',
+      percentage: kpiData?.fcrBreakdown?.oneTouch ? 
+        `${((kpiData.fcrBreakdown.oneTouch / (kpiData.fcrBreakdown.oneTouch + kpiData.fcrBreakdown.twoTouch + kpiData.fcrBreakdown.reopened)) * 100).toFixed(1)}%` : '0%',
       icon: <CheckCircle className="w-4 h-4" />,
       color: '#4FBDBA'
     },
     {
       title: 'Two-touch',
-      value: '178',
-      percentage: '15.0%',
+      value: kpiData?.fcrBreakdown?.twoTouch?.toString() || '0',
+      percentage: kpiData?.fcrBreakdown?.twoTouch ? 
+        `${((kpiData.fcrBreakdown.twoTouch / (kpiData.fcrBreakdown.oneTouch + kpiData.fcrBreakdown.twoTouch + kpiData.fcrBreakdown.reopened)) * 100).toFixed(1)}%` : '0%',
       icon: <RefreshCw className="w-4 h-4" />,
       color: '#F3C969'
     },
     {
       title: 'Re-opened',
-      value: '119',
-      percentage: '10.0%',
+      value: kpiData?.fcrBreakdown?.reopened?.toString() || '0',
+      percentage: kpiData?.fcrBreakdown?.reopened ? 
+        `${((kpiData.fcrBreakdown.reopened / (kpiData.fcrBreakdown.oneTouch + kpiData.fcrBreakdown.twoTouch + kpiData.fcrBreakdown.reopened)) * 100).toFixed(1)}%` : '0%',
       icon: <AlertCircle className="w-4 h-4" />,
       color: '#F47C7C'
     }
@@ -566,7 +581,7 @@ export default function Dashboard() {
         <div className="text-center">
           <p className="text-red-400 mb-4">Failed to load dashboard data</p>
           <button 
-            onClick={fetchKPIData}
+            onClick={() => fetchKPIData()}
             className="px-4 py-2 bg-[#4FBDBA] text-white rounded-lg hover:bg-[#4FBDBA]/80 transition-colors"
           >
             Retry
@@ -579,43 +594,43 @@ export default function Dashboard() {
   const kpiCards = [
     {
       title: 'Weekly Tickets In',
-      value: kpiData.weeklyTicketsIn[kpiData.weeklyTicketsIn.length - 1]?.toString() || '0',
+      value: kpiData?.weeklyTicketsIn?.[kpiData.weeklyTicketsIn.length - 1]?.toString() || '0',
       change: '+12.5%',
       trend: 'up' as const,
       icon: <FileText className="w-5 h-5" />,
-      sparklineData: kpiData.weeklyTicketsIn,
+      sparklineData: kpiData?.weeklyTicketsIn || [],
     },
     {
       title: 'Weekly Tickets Resolved',
-      value: kpiData.weeklyTicketsResolved[kpiData.weeklyTicketsResolved.length - 1]?.toString() || '0',
+      value: kpiData?.weeklyTicketsResolved?.[kpiData.weeklyTicketsResolved.length - 1]?.toString() || '0',
       change: '+8.3%',
       trend: 'up' as const,
       icon: <CheckCircle className="w-5 h-5" />,
-      sparklineData: kpiData.weeklyTicketsResolved,
+      sparklineData: kpiData?.weeklyTicketsResolved || [],
     },
     {
       title: 'FRT Median',
-      value: `${kpiData.frtMedian.toFixed(1)}h`,
+      value: `${(kpiData?.frtMedian || 0).toFixed(1)}h`,
       change: '-15min',
       trend: 'up' as const,
       icon: <Clock className="w-5 h-5" />,
-      sparklineData: kpiData.trends.frt,
+      sparklineData: kpiData?.trends?.frt || [],
     },
     {
       title: 'Average Handle Time',
-      value: `${kpiData.avgHandleTime.toFixed(1)}min`,
-      change: '-2.1min',
+      value: `${(kpiData?.avgHandleTime || 0).toFixed(1)}h`,
+      change: '-2.1h',
       trend: 'up' as const,
       icon: <Clock className="w-5 h-5" />,
-      sparklineData: kpiData.trends.aht,
+      sparklineData: kpiData?.trends?.aht || [],
     },
     {
       title: 'FCR %',
-      value: `${kpiData.fcrRate.toFixed(1)}%`,
+      value: `${(kpiData?.fcrRate || 0).toFixed(1)}%`,
       change: '+3.1%',
       trend: 'up' as const,
       icon: <TrendingUp className="w-5 h-5" />,
-      sparklineData: kpiData.trends.fcr,
+      sparklineData: kpiData?.trends?.fcr || [],
     },
   ];
 
@@ -647,11 +662,14 @@ export default function Dashboard() {
                     <div className="relative">
                       <select
                         value={selectedBrand}
-                        onChange={(e) => setSelectedBrand(e.target.value)}
+                        onChange={(e) => {
+                          setSelectedBrand(e.target.value);
+                          fetchKPIData(e.target.value);
+                        }}
                         className="bg-[#282929] text-white px-4 py-2 rounded-lg border border-gray-600 focus:border-[#4FBDBA] focus:outline-none appearance-none pr-8"
                       >
                         {brands.map((brand) => (
-                          <option key={brand} value={brand}>{brand}</option>
+                          <option key={brand.value} value={brand.value}>{brand.label}</option>
                         ))}
                       </select>
                       <ChevronDown className="w-4 h-4 absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -693,8 +711,8 @@ export default function Dashboard() {
                 </div>
                 <CompactChart 
                   title="Weekly Tickets: In vs Resolved (Last 5 Weeks)"
-                  inData={kpiData.weeklyTicketsIn}
-                  resolvedData={kpiData.weeklyTicketsResolved}
+                  inData={kpiData?.weeklyTicketsIn || []}
+                  resolvedData={kpiData?.weeklyTicketsResolved || []}
                 />
               </div>
             ) : (
@@ -725,34 +743,49 @@ export default function Dashboard() {
                           {/* Y-axis */}
                           <line x1="40" y1="20" x2="40" y2="140" stroke="#374151" strokeWidth="1" />
                           
-                          {/* Y-axis labels */}
-                          {[0, 300, 600, 900, 1200].map((value, index) => {
-                            const y = 140 - (value / 1200) * 120;
-                            return (
-                              <g key={index}>
-                                <line x1="35" y1={y} x2="40" y2={y} stroke="#374151" strokeWidth="1" />
-                                <text x="30" y={y + 3} fill="#9CA3AF" fontSize="10" textAnchor="end">
-                                  {value}
-                                </text>
-                              </g>
-                            );
-                          })}
+                          {/* Y-axis labels - dynamic based on actual data */}
+                          {(() => {
+                            const allValues = [...(kpiData?.weeklyTicketsIn || []), ...(kpiData?.weeklyTicketsResolved || [])];
+                            const maxValue = Math.max(...allValues, 1);
+                            const step = Math.ceil(maxValue / 4);
+                            const labels = [0, step, step * 2, step * 3, step * 4];
+                            
+                            return labels.map((value, index) => {
+                              const y = 140 - (value / (step * 4)) * 120;
+                              return (
+                                <g key={index}>
+                                  <line x1="35" y1={y} x2="40" y2={y} stroke="#374151" strokeWidth="1" />
+                                  <text x="30" y={y + 3} fill="#9CA3AF" fontSize="10" textAnchor="end">
+                                    {value}
+                                  </text>
+                                </g>
+                              );
+                            });
+                          })()}
                           
-                          {/* Grid lines - 연한 그리드 추가 */}
-                          {[0, 300, 600, 900, 1200].map((value, index) => {
-                            const y = 140 - (value / 1200) * 120;
-                            return (
-                              <line key={index} x1="40" y1={y} x2="90%" y2={y} stroke="#374151" strokeWidth="0.5" opacity="0.2" />
-                            );
-                          })}
+                          {/* Grid lines - dynamic based on actual data */}
+                          {(() => {
+                            const allValues = [...(kpiData?.weeklyTicketsIn || []), ...(kpiData?.weeklyTicketsResolved || [])];
+                            const maxValue = Math.max(...allValues, 1);
+                            const step = Math.ceil(maxValue / 4);
+                            const labels = [0, step, step * 2, step * 3, step * 4];
+                            
+                            return labels.map((value, index) => {
+                              const y = 140 - (value / (step * 4)) * 120;
+                              return (
+                                <line key={index} x1="40" y1={y} x2="90%" y2={y} stroke="#374151" strokeWidth="0.5" opacity="0.2" />
+                              );
+                            });
+                          })()}
                         </svg>
                         
-                        <div className="h-40 flex items-end space-x-6 ml-12">
-                        {kpiData.weeklyTicketsIn.map((inValue, index) => {
-                          const resolvedValue = kpiData.weeklyTicketsResolved[index];
-                          const maxValue = Math.max(...kpiData.weeklyTicketsIn, ...kpiData.weeklyTicketsResolved);
-                          const isCurrentWeek = index === kpiData.weeklyTicketsIn.length - 1;
-                          const weekLabel = index === 4 ? 'Current' : `W-${4-index}`;
+                        <div className="h-40 flex items-end space-x-6 ml-12" style={{ height: '160px' }}>
+                        {(kpiData?.weeklyTicketsIn || []).map((inValue, index) => {
+                          const resolvedValue = kpiData?.weeklyTicketsResolved?.[index] || 0;
+                          const allValues = [...(kpiData?.weeklyTicketsIn || []), ...(kpiData?.weeklyTicketsResolved || [])];
+                          const maxValue = Math.max(...allValues, 1); // 최소값 1로 설정하여 0으로 나누기 방지
+                          const isCurrentWeek = false; // Remove transparency for all weeks
+                          const weekLabel = kpiData?.weeklyLabels?.[index] || `W-${4-index}`;
                           
                           return (
                             <WeeklyTicketBar
@@ -802,7 +835,7 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <TrendChart 
                     title="FRT Median Trend" 
-                    data={kpiData.trends.frt} 
+                    data={kpiData?.trends?.frt || []} 
                     color="#4FBDBA" 
                     unit="h"
                   />
@@ -813,13 +846,13 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <TrendChart 
                     title="Average Handle Time" 
-                    data={kpiData.trends.aht} 
+                    data={kpiData?.trends?.aht || []} 
                     color="#F3C969" 
                     unit="min"
                   />
                   <TrendChart 
                     title="First Contact Resolution %" 
-                    data={kpiData.trends.fcr} 
+                    data={kpiData?.trends?.fcr || []} 
                     color="#4FBDBA" 
                     unit="%"
                   />
