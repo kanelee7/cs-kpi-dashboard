@@ -21,18 +21,25 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build application
         run: npm run build
 
       - name: Run KPI Sync
+        env:
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
         run: |
+          if [ -z "$DASHBOARD_URL" ] || [ -z "$API_KEY" ]; then
+            echo "DASHBOARD_URL and API_KEY secrets must be configured." >&2
+            exit 1
+          fi
           curl -X POST \
-            -H "Authorization: Bearer ${{ secrets.API_KEY }}" \
-            ${{ secrets.DASHBOARD_URL }}/api/kpi-sync
+            -H "Authorization: Bearer $API_KEY" \
+            "$DASHBOARD_URL/api/kpi-sync"
 
-      - name: Notify on failure
+      - name: Notify Slack on failure
         if: failure()
         uses: rtCamp/action-slack-notify@v2
         env:
