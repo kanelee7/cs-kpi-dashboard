@@ -68,19 +68,43 @@ export class ZendeskClient {
     return `Basic ${credentials}`;
   }
 
-  private async fetchJson<T>(url: string): Promise<T> {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: this.getAuthHeader(),
-        'Content-Type': 'application/json',
-      },
-    });
+  private async fetchJson<T>(url: string, retries = 3, delay = 1000): Promise<T> {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+            'Content-Type': 'application/json',
+          },
+        });
 
-    if (!response.ok) {
-      throw new Error(`Zendesk API error: ${response.status} ${response.statusText}`);
+        if (response.status === 429) {
+          const retryAfter = parseInt(response.headers.get('Retry-After') || '10', 10) * 1000;
+          console.warn(`[ZendeskClient] Rate limited. Retrying after ${retryAfter}ms (attempt ${attempt}/${retries})`);
+          await this.sleep(retryAfter);
+          continue;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Zendesk API error: ${response.status} ${response.statusText}`);
+        }
+
+        return (await response.json()) as T;
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`[ZendeskClient] Attempt ${attempt} failed: ${error.message}`);
+        
+        if (attempt < retries) {
+          const backoff = delay * Math.pow(2, attempt - 1);
+          console.log(`[ZendeskClient] Retrying in ${backoff}ms...`);
+          await this.sleep(backoff);
+        }
+      }
     }
 
-    return (await response.json()) as T;
+    throw lastError || new Error('Failed to fetch data from Zendesk API');
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -97,27 +121,35 @@ export class ZendeskClient {
     const startDate = createdAfter ?? fallbackStart.toISOString().split('T')[0];
 
     let page = 1;
-    let nextPageUrl: string | null = `${this.baseUrl}/tickets.json?include=organizations&per_page=${this.perPage}&created_after=${startDate}`;
+    let nextPageUrl: string | null = `${this.baseUrl}/incremental/tickets/cursor.json?start_time=${Math.floor(new Date(startDate).getTime() / 1000)}&include=organizations,metric_sets`;
     const collected: ZendeskTicket[] = [];
 
     console.log(`[ZendeskClient] Fetching tickets created after ${startDate}`);
 
     while (nextPageUrl && page <= this.maxPages) {
-      console.log(`[ZendeskClient] Fetching page ${page}`);
+      console.log(`[ZendeskClient] Fetching page ${page} with URL: ${nextPageUrl}`);
 
       try {
-        const data: ZendeskTicketListResponse = await this.fetchJson<ZendeskTicketListResponse>(nextPageUrl);
+        const data: any = await this.fetchJson<ZendeskTicketListResponse>(nextPageUrl);
         const tickets: ZendeskTicket[] = data.tickets ?? [];
-
-        collected.push(
-          ...tickets.map((ticket: ZendeskTicket) => ({
+        
+        // Zendesk Analytics와 동일한 방식으로 solved_at 설정
+        const processedTickets = tickets.map((ticket: any) => {
+          // metric_sets에서 정확한 해결 시간 사용
+          const metrics = ticket.metric_sets?.ticket_metric_events?.find((m: any) => m.id === ticket.id);
+          const solvedAt = metrics?.solved_at || ticket.solved_at;
+          
+          return {
             ...ticket,
-            solved_at:
-              ticket.solved_at ??
-              (ticket.status === 'solved' || ticket.status === 'closed' ? ticket.updated_at : null),
-          })),
-        );
+            solved_at: solvedAt,
+            // 추가 메트릭 정보
+            first_reply_time: metrics?.first_reply_time_in_minutes || null,
+            full_resolution_time: metrics?.full_resolution_time_in_minutes || null,
+            requester_wait_time: metrics?.requester_wait_time_in_minutes || null,
+          };
+        });
 
+        collected.push(...processedTickets);
         console.log(`[ZendeskClient] Retrieved ${tickets.length} tickets on page ${page} (total=${collected.length})`);
 
         nextPageUrl = data.next_page ?? null;

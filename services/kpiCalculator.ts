@@ -1,13 +1,21 @@
 import type { ZendeskTicket } from './zendeskClient';
 import { getDateRange } from '../utils/dateUtils';
 
-// Constants
-const MAX_AHT_HOURS = 168; // 7 days
-const MAX_AHT_MINUTES = MAX_AHT_HOURS * 60; // For FRT which is in minutes
-const FCR_ONE_TOUCH_HOURS = 24;
-const FCR_TWO_TOUCH_HOURS = 72;
-const FRT_WINDOW_DAYS = 30;
-const AHT_WINDOW_DAYS = 30; // Changed from 90 to 30 for consistency with FRT
+// Constants (Zendesk Analytics와 동일한 값 사용)
+const MAX_AHT_HOURS = 168; // 7 days (Zendesk 표준)
+const MAX_AHT_MINUTES = MAX_AHT_HOURS * 60;
+const FCR_ONE_TOUCH_HOURS = 24; // 24시간 내 1차 해결
+const FCR_TWO_TOUCH_HOURS = 72; // 72시간 내 2차 해결
+const FRT_WINDOW_DAYS = 30; // FRT 계산 기간
+const AHT_WINDOW_DAYS = 30; // AHT 계산 기간
+
+// Zendesk와 동일한 버킷 기준 (분 단위)
+const FRT_BUCKETS = {
+  UNDER_1H: 60,         // 0-1시간
+  UNDER_8H: 8 * 60,     // 1-8시간
+  UNDER_24H: 24 * 60,   // 8-24시간
+  OVER_24H: Infinity    // 24시간 초과
+};
 
 // Debug logger
 const debug = (message: string, data?: any) => {
@@ -131,28 +139,56 @@ export function calculateKPIsForWeek(
 }
 
 export function calculateKPIs(tickets: ZendeskTicket[], referenceDate: Date = new Date()): KPIData {
-  const { start: startDate, end: endDate } = getDateRange(7, referenceDate);
+  const { start: startDate, end: endDate } = getDateRange(referenceDate, 'week');
   return calculateKPIsForWeek(tickets, startDate, endDate);
 }
 
 function buildFRTDistribution(frtValuesMinutes: number[], weekTickets: ZendeskTicket[]): FRTDistribution {
   const distribution: FRTDistribution = { ...EMPTY_DISTRIBUTION };
+  const repliedTicketIds = new Set<number>();
 
-  frtValuesMinutes.forEach((minutes) => {
+  // Process tickets with replies
+  frtValuesMinutes.forEach((minutes, index) => {
+    const ticket = weekTickets[index];
+    if (!ticket) return;
+    
+    repliedTicketIds.add(ticket.id);
+    
+    // Skip invalid or negative values
+    if (minutes <= 0) {
+      debug('Skipping invalid FRT value', { ticketId: ticket.id, minutes });
+      return;
+    }
+
+    // Convert to hours for bucketing
     const hours = minutes / 60;
+    
+    // Categorize into time buckets (matching Zendesk Analytics)
     if (hours <= 1) {
-      distribution['0-1h'] += 1;
+      distribution['0-1h']++;
     } else if (hours <= 8) {
-      distribution['1-8h'] += 1;
+      distribution['1-8h']++;
     } else if (hours <= 24) {
-      distribution['8-24h'] += 1;
+      distribution['8-24h']++;
     } else {
-      distribution['>24h'] += 1;
+      distribution['>24h']++;
     }
   });
 
-  const noReply = weekTickets.filter((ticket) => ticket.status === 'open' || ticket.status === 'pending').length;
-  distribution['No Reply'] = noReply;
+  // Calculate "No Reply" tickets (tickets without a first reply)
+  const noReplyTickets = weekTickets.filter(ticket => 
+    !repliedTicketIds.has(ticket.id) && 
+    (ticket.status === 'open' || ticket.status === 'pending')
+  );
+  
+  distribution['No Reply'] = noReplyTickets.length;
+  
+  debug('FRT Distribution', {
+    totalTickets: weekTickets.length,
+    withReplies: frtValuesMinutes.length,
+    noReply: noReplyTickets.length,
+    distribution: { ...distribution }
+  });
 
   return distribution;
 }
@@ -160,73 +196,123 @@ function buildFRTDistribution(frtValuesMinutes: number[], weekTickets: ZendeskTi
 function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBreakdown: FCRBreakdown } {
   if (tickets.length === 0) {
     debug('No tickets provided for FCR calculation');
-    return { fcrPercent: 0, fcrBreakdown: { ...EMPTY_FCR_BREAKDOWN } };
+    return { fcrPercent: 0, fcrBreakdown: { oneTouch: 0, twoTouch: 0, reopened: 0 } };
   }
 
   let oneTouch = 0;
   let twoTouch = 0;
   let reopened = 0;
-  let skipped = 0;
+  let invalidTickets = 0;
+  const validTickets: ZendeskTicket[] = [];
 
-  tickets.forEach((ticket, index) => {
-    // Only count tickets that are actually solved/closed
-    if (!ticket.solved_at) {
-      debug(`Skipping ticket ${ticket.id} - not solved/closed`, { status: ticket.status });
-      skipped++;
-      return;
-    }
-
-    const hoursToSolve = getHoursBetween(ticket.created_at, ticket.solved_at);
-    
-    if (hoursToSolve === null || hoursToSolve <= 0) {
-      debug(`Skipping ticket ${ticket.id} - invalid solve time`, { 
-        created: ticket.created_at, 
-        solved: ticket.solved_at,
-        hoursToSolve
+  // First pass: Filter valid tickets
+  tickets.forEach(ticket => {
+    // Only include solved/closed tickets
+    if (ticket.status !== 'solved' && ticket.status !== 'closed') {
+      debug('Skipping non-resolved ticket', { 
+        ticketId: ticket.id, 
+        status: ticket.status 
       });
-      skipped++;
+      invalidTickets++;
       return;
     }
 
-    // Check if ticket was reopened (has been through multiple solve cycles)
-    const isReopened = ticket.status === 'solved' && 
-                      ticket.updated_at !== ticket.solved_at &&
-                      new Date(ticket.updated_at) > new Date(ticket.solved_at);
+    // Must have both created_at and solved_at
+    if (!ticket.created_at || !ticket.solved_at) {
+      debug('Missing timestamps', { 
+        ticketId: ticket.id, 
+        hasCreated: !!ticket.created_at,
+        hasSolved: !!ticket.solved_at
+      });
+      invalidTickets++;
+      return;
+    }
+
+    // Calculate solve time in hours
+    const solveTimeHours = getHoursBetween(ticket.created_at, ticket.solved_at);
+    if (solveTimeHours === null || solveTimeHours <= 0) {
+      debug('Invalid solve time', { 
+        ticketId: ticket.id, 
+        solveTimeHours,
+        created: ticket.created_at,
+        solved: ticket.solved_at
+      });
+      invalidTickets++;
+      return;
+    }
+
+    validTickets.push(ticket);
+  });
+
+  debug('FCR - Valid tickets for calculation', { 
+    total: tickets.length,
+    valid: validTickets.length,
+    invalid: invalidTickets
+  });
+
+  if (validTickets.length === 0) {
+    return { 
+      fcrPercent: 0, 
+      fcrBreakdown: { oneTouch: 0, twoTouch: 0, reopened: 0 } 
+    };
+  }
+
+  // Second pass: Calculate FCR metrics
+  validTickets.forEach(ticket => {
+    const solveTimeHours = getHoursBetween(ticket.created_at, ticket.solved_at!)!;
+    
+    // Check for reopened tickets (Zendesk considers these as not FCR)
+    const isReopened = ticket.tags?.includes('reopened') || 
+                      ticket.tags?.includes('follow_up') ||
+                      (ticket.custom_fields?.some((f: any) => 
+                        f.id === 'reopened' && f.value === true
+                      ));
 
     if (isReopened) {
-      debug(`Ticket ${ticket.id} marked as reopened`, { 
-        created: ticket.created_at, 
-        solved: ticket.solved_at,
-        updated: ticket.updated_at
+      reopened++;
+      debug('FCR - Reopened ticket', { 
+        ticketId: ticket.id, 
+        solveTimeHours,
+        tags: ticket.tags,
+        customFields: ticket.custom_fields
       });
-      reopened++;
-    } else if (hoursToSolve <= FCR_ONE_TOUCH_HOURS) {
-      debug(`Ticket ${ticket.id} marked as one-touch FCR`, { hoursToSolve });
+    } else if (solveTimeHours <= FCR_ONE_TOUCH_HOURS) {
       oneTouch++;
-    } else if (hoursToSolve <= FCR_TWO_TOUCH_HOURS) {
-      debug(`Ticket ${ticket.id} marked as two-touch FCR`, { hoursToSolve });
+      debug('FCR - One touch resolution', { 
+        ticketId: ticket.id, 
+        solveTimeHours,
+        maxAllowed: FCR_ONE_TOUCH_HOURS
+      });
+    } else if (solveTimeHours <= FCR_TWO_TOUCH_HOURS) {
       twoTouch++;
+      debug('FCR - Two touch resolution', { 
+        ticketId: ticket.id, 
+        solveTimeHours,
+        maxAllowed: FCR_TWO_TOUCH_HOURS
+      });
     } else {
-      debug(`Ticket ${ticket.id} took too long to resolve`, { hoursToSolve });
       reopened++;
+      debug('FCR - Long resolution time', { 
+        ticketId: ticket.id, 
+        solveTimeHours,
+        maxAllowed: FCR_TWO_TOUCH_HOURS
+      });
     }
   });
 
-  const validTickets = tickets.length - skipped;
-  const fcrPercent = validTickets > 0 ? roundTo((oneTouch / validTickets) * 100, 1) : 0;
+  // Calculate FCR percentage (one-touch and two-touch resolutions as percentage of valid tickets)
+  const fcrPercent = ((oneTouch + twoTouch) / validTickets.length) * 100;
   
-  debug('FCR Calculation Results', {
-    totalTickets: tickets.length,
-    validTickets,
+  debug('FCR - Final calculation', {
+    totalTickets: validTickets.length,
     oneTouch,
     twoTouch,
     reopened,
-    skipped,
-    fcrPercent
+    fcrPercent: roundTo(fcrPercent, 1) + '%'
   });
-
+  
   return {
-    fcrPercent,
+    fcrPercent: roundTo(fcrPercent, 1),
     fcrBreakdown: {
       oneTouch,
       twoTouch,

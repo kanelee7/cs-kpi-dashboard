@@ -28,16 +28,36 @@ jobs:
 
       - name: Run KPI Sync
         env:
-          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
+          ZENDESK_EMAIL: ${{ secrets.ZENDESK_EMAIL }}
+          ZENDESK_API_TOKEN: ${{ secrets.ZENDESK_API_TOKEN }}
+          ZENDESK_SUBDOMAIN: ${{ secrets.ZENDESK_SUBDOMAIN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -z "$DASHBOARD_URL" ] || [ -z "$API_KEY" ]; then
-            echo "DASHBOARD_URL and API_KEY secrets must be configured." >&2
+          # 환경 변수 확인
+          if [ -z "$ZENDESK_EMAIL" ] || [ -z "$ZENDESK_API_TOKEN" ] || [ -z "$ZENDESK_SUBDOMAIN" ] || \
+             [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Error: Required environment variables are not set." >&2
+            echo "Please check the following environment variables:" >&2
+            echo "- ZENDESK_EMAIL" >&2
+            echo "- ZENDESK_API_TOKEN" >&2
+            echo "- ZENDESK_SUBDOMAIN" >&2
+            echo "- SUPABASE_URL" >&2
+            echo "- SUPABASE_SERVICE_ROLE_KEY" >&2
             exit 1
           fi
-          curl -X POST \
-            -H "Authorization: Bearer $API_KEY" \
-            "$DASHBOARD_URL/api/kpi-sync"
+
+          # KPI 동기화 스크립트 실행
+          echo "Starting KPI sync..."
+          npx ts-node --transpile-only scripts/sync-kpi.ts
+          
+          # 실행 결과 확인
+          if [ $? -ne 0 ]; then
+            echo "Error: KPI sync failed" >&2
+            exit 1
+          fi
+          
+          echo "KPI sync completed successfully"
 
       - name: Notify Slack on failure
         if: failure()

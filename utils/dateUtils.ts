@@ -42,10 +42,37 @@ export function getWeekRange(offsetWeeks = 0): WeekRange {
 }
 
 /**
+ * Get date range for a specific period type ('week' or 'day') relative to a reference date.
+ * @param referenceDate The reference date (defaults to current date)
+ * @param periodType Type of period ('week' or 'day')
+ * @returns Object containing start and end dates
+ */
+export function getDateRange(referenceDate: Date, periodType: 'week' | 'day' = 'week'): WeekRange {
+  const end = toKst(referenceDate);
+  const start = new Date(end);
+  
+  if (periodType === 'week') {
+    // For week, get the start of the week (Sunday)
+    const day = end.getUTCDay();
+    start.setUTCDate(end.getUTCDate() - day);
+  } else {
+    // For day, just use the same day
+    start.setUTCDate(end.getUTCDate());
+  }
+  
+  // Set to start of day in KST
+  start.setUTCHours(0, 0, 0, 0);
+  end.setUTCHours(23, 59, 59, 999);
+  
+  return { start, end };
+}
+
+/**
  * Returns a date range (inclusive) ending at referenceDate and spanning `days`.
  * Default reference is now and aligned to KST midnight.
+ * @deprecated Use getDateRange with periodType instead
  */
-export function getDateRange(days: number, referenceDate: Date = new Date()): WeekRange {
+export function getDateRangeDays(days: number, referenceDate: Date = new Date()): WeekRange {
   const end = toKst(referenceDate);
   end.setUTCHours(0, 0, 0, 0);
 

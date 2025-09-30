@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "kpi-sync": "ts-node --transpile-only scripts/sync-kpi.ts",
+    "kpi-sync:dev": "dotenv -e .env.local -- ts-node --transpile-only scripts/sync-kpi.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -17,6 +19,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "dotenv-cli": "^7.3.0",
+    "ts-node": "^10.9.2",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.18",
