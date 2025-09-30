@@ -1,0 +1,42 @@
+name: KPI Sync
+
+on:
+  schedule:
+    # Run every Monday at 02:00 KST (17:00 UTC on Sunday)
+    - cron: '0 17 * * 0'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run KPI Sync
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.API_KEY }}" \
+            ${{ secrets.DASHBOARD_URL }}/api/kpi-sync
+
+      - name: Notify on failure
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_TITLE: 'KPI Sync Failed'
+          SLACK_MESSAGE: 'KPI sync job failed. Check the GitHub Actions run for details.'
+          SLACK_COLOR: 'danger'

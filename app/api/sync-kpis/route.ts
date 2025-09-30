@@ -51,7 +51,7 @@ class ZendeskClient {
         const tickets = data.tickets || []
         
         // Add solved_at field by checking ticket status and updated_at
-        const ticketsWithSolvedAt = tickets.map(ticket => {
+        const ticketsWithSolvedAt = tickets.map((ticket: ZendeskTicket) => {
           let solvedAt = null
           
           // If ticket is solved or closed, use updated_at as solved_at

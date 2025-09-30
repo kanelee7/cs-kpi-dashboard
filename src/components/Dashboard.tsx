@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -22,6 +22,7 @@ import {
 interface KPIData {
   weeklyTicketsIn: number[];
   weeklyTicketsResolved: number[];
+  weeklyLabels: string[];
   frtMedian: number;
   avgHandleTime: number;
   fcrRate: number;
@@ -32,6 +33,18 @@ interface KPIData {
     fcr: number[];
     csat: number[];
   };
+  fcrBreakdown?: {
+    oneTouch: number;
+    twoTouch: number;
+    reopened: number;
+  };
+  frtDistribution?: {
+    '0-1h': number;
+    '1-8h': number;
+    '8-24h': number;
+    '>24h': number;
+    'No Reply': number;
+  }[];
 }
 
 interface KPICardProps {
@@ -156,9 +169,15 @@ const FCRBreakdownCard: React.FC<{ title: string; value: string; percentage: str
 const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: number[] }> = ({ title, inData, resolvedData }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const maxValue = Math.max(...inData, ...resolvedData);
-  const weeks = ['W-4', 'W-3', 'W-2', 'W-1'];
   
-  // Remove current week data for compact view
+  // Generate week labels for previous 4 weeks (excluding current week)
+  const currentDate = new Date();
+  const startDate = new Date(currentDate.getFullYear(), 0, 1);
+  const days = Math.floor((currentDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+  const currentWeek = Math.ceil((days + startDate.getDay() + 1) / 7);
+  const weeks = Array.from({length: 4}, (_, i) => `Week ${currentWeek - 4 + i}`).reverse();
+  
+  // Use last 4 weeks of data (excluding current week)
   const compactInData = inData.slice(0, 4);
   const compactResolvedData = resolvedData.slice(0, 4);
 
@@ -235,37 +254,90 @@ const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: nu
 
 const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?: string }> = ({ title, data, color, unit = '' }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const maxValue = Math.max(...data);
-  const minValue = Math.min(...data);
-  const range = maxValue - minValue || 1;
-  const weeks = ['W-4', 'W-3', 'W-2', 'W-1', 'Current'];
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 320, height: 120 });
 
+  useEffect(() => {
+    if (!containerRef.current || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        setDimensions({
+          width: Math.max(width, 200),
+          height: Math.max(height, 120)
+        });
+      }
+    });
+
+    observer.observe(containerRef.current);
+
+    return () => observer.disconnect();
+  }, []);
+  
+  // Ensure we have data to display
+  const chartData = [...(data || [])].reverse().slice(0, 4); // Reverse to show oldest to newest
+  
+  if (chartData.length === 0) {
+    chartData.push(0, 0, 0, 0); // Default to zeros if no data
+  }
+  
+  // Calculate min and max values with some padding
+  const minValue = Math.max(0, Math.min(...chartData) * 0.9); // 10% padding below min
+  const maxValue = Math.max(...chartData) * 1.1; // 10% padding above max
+  const range = maxValue - minValue || 1; // Prevent division by zero
+  
+  // Generate week labels in correct order (oldest to newest)
+  const currentDate = new Date();
+  const startDate = new Date(currentDate.getFullYear(), 0, 1);
+  const days = Math.floor((currentDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+  const currentWeek = Math.ceil((days + startDate.getDay() + 1) / 7);
+  const weeks = Array.from({length: 4}, (_, i) => `Week ${currentWeek - 4 + i}`).reverse();
+  
   // Calculate y-axis ticks
   const yAxisTicks = 5;
   const yAxisValues = Array.from({ length: yAxisTicks }, (_, i) => {
     return minValue + (range * i) / (yAxisTicks - 1);
   });
-  const points = data.map((value, index) => {
-    const x = 40 + (index / (data.length - 1)) * 240;
-    const y = 120 - ((value - minValue) / range) * 80;
+  
+  const CHART_WIDTH = dimensions.width;
+  const CHART_HEIGHT = dimensions.height;
+  const PADDING_X = 40;
+  const PADDING_Y = 20;
+  const CHART_LEFT = PADDING_X;
+  const CHART_RIGHT = Math.max(CHART_WIDTH - PADDING_X, CHART_LEFT + 60);
+  const CHART_TOP = PADDING_Y;
+  const CHART_BOTTOM = Math.max(CHART_HEIGHT - PADDING_Y, CHART_TOP + 60);
+  const xStepDenominator = Math.max(chartData.length - 1, 1);
+  const computeX = (index: number) => CHART_LEFT + (index / xStepDenominator) * (CHART_RIGHT - CHART_LEFT);
+  const computeY = (value: number) => CHART_BOTTOM - ((value - minValue) / range) * (CHART_BOTTOM - CHART_TOP);
+  const computeXPercent = (index: number) => (computeX(index) / CHART_WIDTH) * 100;
+  const computeYPercent = (value: number) => (computeY(value) / CHART_HEIGHT) * 100;
+
+  // Calculate points for the line
+  const points = chartData.map((value, index) => {
+    const x = computeX(index);
+    const y = computeY(value);
     return `${x},${y}`;
   }).join(' ');
 
   return (
     <div className="bg-[#232424] rounded-xl p-6 shadow-lg">
       <h3 className="text-lg font-semibold text-white mb-4">{title}</h3>
-      <div className="relative h-32">
-        <svg width="320" height="120" className="absolute inset-0">
+      <div ref={containerRef} className="relative h-36 md:h-44">
+        <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} className="absolute inset-0 w-full h-full">
           {/* Y-axis */}
-          <line x1="40" y1="20" x2="40" y2="100" stroke="#374151" strokeWidth="1" />
+          <line x1={CHART_LEFT} y1={CHART_TOP} x2={CHART_LEFT} y2={CHART_BOTTOM} stroke="#374151" strokeWidth="1" />
+          {/* X-axis */}
+          <line x1={CHART_LEFT} y1={CHART_BOTTOM} x2={CHART_RIGHT} y2={CHART_BOTTOM} stroke="#374151" strokeWidth="1" />
           
           {/* Y-axis labels */}
           {yAxisValues.map((value, index) => {
-            const y = 100 - (index / (yAxisTicks - 1)) * 80;
+            const y = CHART_BOTTOM - (index / (yAxisTicks - 1)) * (CHART_BOTTOM - CHART_TOP);
             return (
               <g key={index}>
-                <line x1="35" y1={y} x2="40" y2={y} stroke="#374151" strokeWidth="1" />
-                <text x="30" y={y + 3} fill="#9CA3AF" fontSize="10" textAnchor="end">
+                <line x1={CHART_LEFT - 5} y1={y} x2={CHART_LEFT} y2={y} stroke="#374151" strokeWidth="1" />
+                <text x={CHART_LEFT - 10} y={y + 3} fill="#9CA3AF" fontSize="10" textAnchor="end">
                   {Math.round(value * 10) / 10}{unit}
                 </text>
               </g>
@@ -274,9 +346,9 @@ const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?
           
           {/* Grid lines */}
           {yAxisValues.map((_, index) => {
-            const y = 100 - (index / (yAxisTicks - 1)) * 80;
+            const y = CHART_BOTTOM - (index / (yAxisTicks - 1)) * (CHART_BOTTOM - CHART_TOP);
             return (
-              <line key={index} x1="40" y1={y} x2="280" y2={y} stroke="#374151" strokeWidth="0.5" opacity="0.3" />
+              <line key={index} x1={CHART_LEFT} y1={y} x2={CHART_RIGHT} y2={y} stroke="#374151" strokeWidth="0.5" opacity="0.3" />
             );
           })}
           
@@ -287,10 +359,10 @@ const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?
             points={points}
             className="drop-shadow-sm"
           />
-          {data.map((value, index) => {
-            const x = 40 + (index / (data.length - 1)) * 240;
-            const y = 120 - ((value - minValue) / range) * 80;
-            const isCurrentWeek = index === data.length - 1;
+          {chartData.map((value, index) => {
+            const x = computeX(index);
+            const y = computeY(value);
+            const isCurrentWeek = false; // We're not showing current week
             return (
               <circle
                 key={index}
@@ -307,96 +379,159 @@ const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?
               />
             );
           })}
+
+          {/* X-axis labels */}
+          {weeks.map((week, index) => (
+            <text key={week} x={computeX(index)} y={CHART_BOTTOM + 15} fill="#9CA3AF" fontSize="10" textAnchor="middle">
+              {week}
+            </text>
+          ))}
         </svg>
         {hoveredIndex !== null && (
           <div 
             className="absolute bg-[rgba(35,36,36,0.9)] text-white text-[13px] px-3 py-2 rounded-lg whitespace-nowrap pointer-events-none z-10 border border-[rgba(255,255,255,0.1)] backdrop-blur-sm"
             style={{
-              left: `${40 + (hoveredIndex / (data.length - 1)) * 240}px`,
-              top: `${120 - ((data[hoveredIndex] - minValue) / range) * 80 - 30}px`,
-              transform: 'translateX(-50%)'
+              left: `${computeXPercent(hoveredIndex)}%`,
+              top: `${computeYPercent(chartData[hoveredIndex])}%`,
+              transform: 'translate(-50%, -120%)'
             }}
           >
             <div className="flex items-center">
               <span className="text-[#CCCCCC] mr-2">{weeks[hoveredIndex]}:</span>
-              <span className="text-[#5CD6C0] font-bold">{data[hoveredIndex]}{unit}</span>
+              <span className="text-[#5CD6C0] font-bold">{chartData[hoveredIndex]}{unit}</span>
             </div>
           </div>
         )}
-      </div>
-      <div className="flex justify-between text-xs text-gray-500 mt-2 ml-10">
-        {weeks.map((week, index) => (
-          <span key={index} className={index === weeks.length - 1 ? 'opacity-50' : ''}>{week}</span>
-        ))}
       </div>
     </div>
   );
 };
 
+type TimeBracket = '0-1h' | '1-8h' | '8-24h' | '>24h' | 'No Reply';
+
+type WeekData = {
+  [key in TimeBracket]: number;
+};
+
 const FRTDistributionChart: React.FC = () => {
   const [hoveredWeek, setHoveredWeek] = useState<number | null>(null);
+  const [hoveredCategory, setHoveredCategory] = useState<number | null>(null);
   
-  const weeks = ['W-4', 'W-3', 'W-2', 'W-1', 'Current'];
-  const categories = ['0-1h', '1-8h', '8-24h', '>24h', 'No Reply'];
+  // Get current week number (1-52)
+  const currentDate = new Date();
+  const startDate = new Date(currentDate.getFullYear(), 0, 1);
+  const days = Math.floor((currentDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+  const currentWeek = Math.ceil((days + startDate.getDay() + 1) / 7);
+  
+  // Generate week labels for previous 4 weeks (oldest to newest)
+  const weeks = Array.from({length: 4}, (_, i) => `Week ${currentWeek - 4 + i}`).reverse();
+  
+  const categories: TimeBracket[] = ['0-1h', '1-8h', '8-24h', '>24h', 'No Reply'];
   const colors = ['#4FBDBA', '#F3C969', '#F47C7C', '#8B5CF6', '#6B7280'];
   
-  // Sample data: percentage distribution for each week
-  const data = [
-    [45, 35, 15, 4, 1], // W-4
-    [48, 32, 16, 3, 1], // W-3
-    [52, 30, 14, 3, 1], // W-2
-    [49, 33, 15, 2, 1], // W-1
-    [55, 28, 13, 3, 1], // Current
+  // Sample data: percentage distribution for each week (last 4 weeks, excluding current)
+  const chartData: WeekData[] = [
+    { '0-1h': 45, '1-8h': 35, '8-24h': 15, '>24h': 4, 'No Reply': 1 },
+    { '0-1h': 48, '1-8h': 32, '8-24h': 16, '>24h': 3, 'No Reply': 1 },
+    { '0-1h': 52, '1-8h': 30, '8-24h': 14, '>24h': 3, 'No Reply': 1 },
+    { '0-1h': 49, '1-8h': 33, '8-24h': 15, '>24h': 2, 'No Reply': 1 },
   ];
 
   return (
     <div className="bg-[#232424] rounded-xl p-6 shadow-lg">
-      <h3 className="text-lg font-semibold text-white mb-4">Tickets by First Reply Time Brackets</h3>
+      <h3 className="text-lg font-semibold text-white mb-4">Tickets by First Reply Time</h3>
       <div className="space-y-3">
         {weeks.map((week, weekIndex) => (
           <div
             key={weekIndex}
             className="relative"
-            onMouseEnter={() => setHoveredWeek(weekIndex)}
-            onMouseLeave={() => setHoveredWeek(null)}
+            onMouseEnter={() => {
+              setHoveredWeek(weekIndex);
+              setHoveredCategory(null);
+            }}
+            onMouseLeave={() => {
+              setHoveredWeek(null);
+              setHoveredCategory(null);
+            }}
           >
             <div className="flex items-center mb-1">
-              <span className={`text-sm text-gray-400 w-12 ${weekIndex === weeks.length - 1 ? 'opacity-50' : ''}`}>{week}</span>
-              <div className="flex-1 flex h-6 rounded overflow-hidden">
-                {data[weekIndex].map((percentage, catIndex) => (
-                  <div
-                    key={catIndex}
-                    className={`transition-all duration-300 hover:opacity-80 relative ${weekIndex === weeks.length - 1 ? 'opacity-50' : ''}`}
-                    style={{
-                      width: `${percentage}%`,
-                      backgroundColor: colors[catIndex],
-                    }}
-                  >
-                    {hoveredWeek === weekIndex && (
-                      <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-[rgba(35,36,36,0.9)] text-white text-[13px] px-3 py-2 rounded-lg whitespace-nowrap z-10 border border-[rgba(255,255,255,0.1)] backdrop-blur-sm">
-                        <div className="flex items-center">
-                          <span className="text-[#CCCCCC] mr-2">{categories[catIndex]}:</span>
-                          <span className="text-[#5CD6C0] font-bold">{percentage}%</span>
+              <span className={`text-sm text-gray-400 pr-3 shrink-0 whitespace-nowrap ${weekIndex === weeks.length - 1 ? 'opacity-50' : ''}`}>
+                {week}
+              </span>
+              <div className="flex-1 flex h-6 rounded overflow-visible">
+                {categories.map((category, catIndex) => {
+                  const value = chartData[weekIndex][category];
+                  const rowHovered = hoveredWeek === weekIndex;
+                  const segmentHovered = rowHovered && hoveredCategory === catIndex;
+                  const barOpacity = rowHovered ? (segmentHovered ? 1 : 0.6) : 0.85;
+                  
+                  return (
+                    <div
+                      key={category}
+                      className="transition-all duration-300 relative group"
+                      style={{
+                        width: `${value}%`,
+                        backgroundColor: colors[catIndex],
+                        opacity: barOpacity
+                      }}
+                      onMouseEnter={() => {
+                        setHoveredWeek(weekIndex);
+                        setHoveredCategory(catIndex);
+                      }}
+                      onMouseLeave={() => setHoveredCategory(null)}
+                    >
+                      {segmentHovered && (
+                        <div 
+                          className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-[rgba(35,36,36,0.95)] text-white text-xs px-3 py-2 rounded whitespace-nowrap z-50 border border-[rgba(255,255,255,0.2)] shadow-lg"
+                          style={{
+                            minWidth: '80px',
+                            textAlign: 'center',
+                            pointerEvents: 'none'
+                          }}
+                        >
+                          <div className="flex flex-col items-center">
+                            <span className="text-[#CCCCCC] text-xs font-medium">{category}</span>
+                            <span className="text-[#5CD6C0] font-bold text-sm mt-0.5">{value}%</span>
+                          </div>
+                          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-3 h-3 bg-[rgba(35,36,36,0.95)] rotate-45 -z-10 border-r border-b border-[rgba(255,255,255,0.2)]"></div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         ))}
       </div>
-      <div className="flex flex-wrap justify-center gap-4 mt-4 text-xs">
-        {categories.map((category, index) => (
-          <div key={index} className="flex items-center">
+      <div className="flex flex-wrap justify-center gap-3 mt-4 text-xs">
+        {categories.map((category, index) => {
+          const isHovered = hoveredCategory === index;
+          return (
             <div 
-              className="w-3 h-3 rounded mr-2" 
-              style={{ backgroundColor: colors[index] }}
-            ></div>
-            <span className="text-gray-400">{category}</span>
-          </div>
-        ))}
+              key={index} 
+              className="flex items-center cursor-pointer"
+              onMouseEnter={() => setHoveredCategory(index)}
+              onMouseLeave={() => setHoveredCategory(null)}
+            >
+              <div 
+                className="w-3 h-3 rounded mr-1.5 transition-all" 
+                style={{ 
+                  backgroundColor: colors[index],
+                  transform: isHovered ? 'scale(1.2)' : 'scale(1)'
+                }}
+              ></div>
+              <span 
+                className="text-gray-400 transition-colors"
+                style={{
+                  color: isHovered ? '#fff' : '#9CA3AF'
+                }}
+              >
+                {category}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -537,32 +672,38 @@ export default function Dashboard() {
     fetchKPIData();
   }, [fetchKPIData]);
 
-  const fcrBreakdownData = [
-    {
-      title: 'One-touch',
-      value: kpiData?.fcrBreakdown?.oneTouch?.toString() || '0',
-      percentage: kpiData?.fcrBreakdown?.oneTouch ? 
-        `${((kpiData.fcrBreakdown.oneTouch / (kpiData.fcrBreakdown.oneTouch + kpiData.fcrBreakdown.twoTouch + kpiData.fcrBreakdown.reopened)) * 100).toFixed(1)}%` : '0%',
-      icon: <CheckCircle className="w-4 h-4" />,
-      color: '#4FBDBA'
-    },
-    {
-      title: 'Two-touch',
-      value: kpiData?.fcrBreakdown?.twoTouch?.toString() || '0',
-      percentage: kpiData?.fcrBreakdown?.twoTouch ? 
-        `${((kpiData.fcrBreakdown.twoTouch / (kpiData.fcrBreakdown.oneTouch + kpiData.fcrBreakdown.twoTouch + kpiData.fcrBreakdown.reopened)) * 100).toFixed(1)}%` : '0%',
-      icon: <RefreshCw className="w-4 h-4" />,
-      color: '#F3C969'
-    },
-    {
-      title: 'Re-opened',
-      value: kpiData?.fcrBreakdown?.reopened?.toString() || '0',
-      percentage: kpiData?.fcrBreakdown?.reopened ? 
-        `${((kpiData.fcrBreakdown.reopened / (kpiData.fcrBreakdown.oneTouch + kpiData.fcrBreakdown.twoTouch + kpiData.fcrBreakdown.reopened)) * 100).toFixed(1)}%` : '0%',
-      icon: <AlertCircle className="w-4 h-4" />,
-      color: '#F47C7C'
-    }
-  ];
+  // Calculate FCR breakdown with proper handling of zero values
+  const fcrBreakdownData = (() => {
+    const breakdown = kpiData?.fcrBreakdown || { oneTouch: 0, twoTouch: 0, reopened: 0 };
+    const total = Math.max(1, breakdown.oneTouch + breakdown.twoTouch + breakdown.reopened);
+    
+    return [
+      {
+        title: 'One-touch',
+        value: breakdown.oneTouch.toString(),
+        percentage: `${((breakdown.oneTouch / total) * 100).toFixed(1)}%`,
+        icon: <CheckCircle className="w-4 h-4" />,
+        color: '#4FBDBA',
+        show: breakdown.oneTouch > 0
+      },
+      {
+        title: 'Two-touch',
+        value: breakdown.twoTouch.toString(),
+        percentage: `${((breakdown.twoTouch / total) * 100).toFixed(1)}%`,
+        icon: <RefreshCw className="w-4 h-4" />,
+        color: '#F3C969',
+        show: breakdown.twoTouch > 0
+      },
+      {
+        title: 'Re-opened',
+        value: breakdown.reopened.toString(),
+        percentage: `${((breakdown.reopened / total) * 100).toFixed(1)}%`,
+        icon: <AlertCircle className="w-4 h-4" />,
+        color: '#F47C7C',
+        show: true // Always show Re-opened even if 0
+      }
+    ].filter(item => item.show);
+  })();
 
   if (loading) {
     return (
