@@ -93,8 +93,9 @@ export class ZendeskClient {
 
         return (await response.json()) as T;
       } catch (error) {
-        lastError = error as Error;
-        console.warn(`[ZendeskClient] Attempt ${attempt} failed: ${error.message}`);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn(`[ZendeskClient] Attempt ${attempt} failed: ${errorMessage}`);
         
         if (attempt < retries) {
           const backoff = delay * Math.pow(2, attempt - 1);

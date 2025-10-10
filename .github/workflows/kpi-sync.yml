@@ -2,8 +2,8 @@ name: KPI Sync
 
 on:
   schedule:
-    # Run every Monday at 10:00 KST (01:00 UTC on Monday)
-    - cron: '0 1 * * 1'
+    # Run every Tuesday and Friday at 10:00 AM KST (01:00 UTC)
+    - cron: '0 1 * * 2,5'
   workflow_dispatch:
 
 jobs:
