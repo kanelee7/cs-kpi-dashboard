@@ -5,18 +5,119 @@ import { createClient } from '@supabase/supabase-js'
 function getZendeskWeekNumber(date: Date): number {
   const year = date.getUTCFullYear()
   const startOfYear = new Date(Date.UTC(year, 0, 1, 15, 0, 0)) // 1월 1일 KST 00:00
-  
+
   // 1월 1일이 일요일이 아닌 경우, 첫 번째 일요일을 찾음
   const firstSunday = new Date(startOfYear)
   const dayOfWeek = startOfYear.getUTCDay()
   if (dayOfWeek !== 0) {
     firstSunday.setUTCDate(startOfYear.getUTCDate() + (7 - dayOfWeek))
   }
-  
+
   const diffTime = date.getTime() - firstSunday.getTime()
   const diffWeeks = Math.floor(diffTime / (7 * 24 * 60 * 60 * 1000))
-  
+
   return Math.max(1, diffWeeks + 1) // 최소 1주차
+}
+
+type KPIRecord = {
+  brand: string
+  week_start_date: string
+  week_end_date: string
+  week_label: string
+  tickets_in: number
+  tickets_resolved: number
+  frt_median: number
+  aht: number
+  fcr_percent: number
+  frt_distribution: Record<string, number> | null
+  fcr_breakdown: Record<string, number> | null
+}
+
+function normalizeRecords(records: KPIRecord[], brand: string): KPIRecord[] {
+  const parsed = [...records]
+
+  if (brand !== 'all') {
+    return parsed
+      .sort((a, b) => new Date(a.week_start_date).getTime() - new Date(b.week_start_date).getTime())
+      .slice(-5)
+  }
+
+  const aggregateMap = new Map<string, {
+    week_start_date: string
+    week_end_date: string
+    week_label: string
+    tickets_in: number
+    tickets_resolved: number
+    frtValues: number[]
+    ahtValues: number[]
+    fcrValues: number[]
+    frt_distribution: Record<string, number>
+    fcr_breakdown: Record<string, number>
+  }>()
+
+  parsed.forEach((record: KPIRecord) => {
+    const key = record.week_start_date
+    if (!aggregateMap.has(key)) {
+      aggregateMap.set(key, {
+        week_start_date: record.week_start_date,
+        week_end_date: record.week_end_date,
+        week_label: record.week_label,
+        tickets_in: 0,
+        tickets_resolved: 0,
+        frtValues: [],
+        ahtValues: [],
+        fcrValues: [],
+        frt_distribution: {},
+        fcr_breakdown: {}
+      })
+    }
+
+    const bucket = aggregateMap.get(key)!
+    bucket.tickets_in += record.tickets_in || 0
+    bucket.tickets_resolved += record.tickets_resolved || 0
+    if (typeof record.frt_median === 'number') bucket.frtValues.push(record.frt_median)
+    if (typeof record.aht === 'number') bucket.ahtValues.push(record.aht)
+    if (typeof record.fcr_percent === 'number') bucket.fcrValues.push(record.fcr_percent)
+
+    if (record.frt_distribution) {
+      for (const [label, value] of Object.entries(record.frt_distribution)) {
+        const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
+        bucket.frt_distribution[label] = (bucket.frt_distribution[label] || 0) + numericValue
+      }
+    }
+
+    if (record.fcr_breakdown) {
+      for (const [label, value] of Object.entries(record.fcr_breakdown)) {
+        const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
+        bucket.fcr_breakdown[label] = (bucket.fcr_breakdown[label] || 0) + numericValue
+      }
+    }
+  })
+
+  const aggregated = Array.from(aggregateMap.values())
+    .map(bucket => ({
+      brand: 'all',
+      week_start_date: bucket.week_start_date,
+      week_end_date: bucket.week_end_date,
+      week_label: bucket.week_label,
+      tickets_in: bucket.tickets_in,
+      tickets_resolved: bucket.tickets_resolved,
+      frt_median: average(bucket.frtValues),
+      aht: average(bucket.ahtValues),
+      fcr_percent: average(bucket.fcrValues),
+      frt_distribution: bucket.frt_distribution,
+      fcr_breakdown: bucket.fcr_breakdown
+    }))
+    .sort((a, b) => new Date(a.week_start_date).getTime() - new Date(b.week_start_date).getTime())
+    .slice(-5)
+
+  return aggregated
+}
+
+function average(values: number[]): number {
+  if (!values.length) return 0
+  const sum = values.reduce((acc, value) => acc + value, 0)
+  return Number((sum / values.length).toFixed(2))
 }
 
 export async function GET(request: Request) {
@@ -37,13 +138,18 @@ export async function GET(request: Request) {
 
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-          // Query the latest 5 weeks of KPI data for the specified brand
-          const { data: kpiRecords, error } = await supabase
-            .from('kpis')
-            .select('*')
-            .eq('brand', brand)
-            .order('week_start_date', { ascending: true })
-            .limit(5)
+    // Query the latest KPI data (grab enough rows to cover multiple brands per week)
+    let query = supabase
+      .from('kpis')
+      .select('*')
+      .order('week_start_date', { ascending: false })
+      .limit(50)
+
+    if (brand !== 'all') {
+      query = query.eq('brand', brand)
+    }
+
+    const { data: kpiRecords, error } = await query
 
     if (error) {
       console.error('Error fetching KPI data from Supabase:', error)
@@ -55,18 +161,21 @@ export async function GET(request: Request) {
       return NextResponse.json(getSampleData(brand))
     }
 
-    // Use the latest week's data for main KPIs
-    const latestRecord = kpiRecords[kpiRecords.length - 1]
+    const normalizedRecords = normalizeRecords(kpiRecords, brand)
 
-    // Extract weekly data in correct order (oldest to newest)
-    const weeklyTicketsIn = kpiRecords.map(record => record.tickets_in)
-    const weeklyTicketsResolved = kpiRecords.map(record => record.tickets_resolved)
-    const weeklyFrt = kpiRecords.map(record => record.frt_median)
-    const weeklyAht = kpiRecords.map(record => record.aht)
-    const weeklyFcr = kpiRecords.map(record => record.fcr_percent)
-    
-    // Use stored week labels from database
-    const weeklyLabels = kpiRecords.map(record => record.week_label)
+    if (normalizedRecords.length === 0) {
+      console.log(`KPI data normalization returned empty result for brand: ${brand}`)
+      return NextResponse.json(getSampleData(brand))
+    }
+
+    const latestRecord = normalizedRecords[normalizedRecords.length - 1]
+
+    const weeklyTicketsIn = normalizedRecords.map((record: KPIRecord) => record.tickets_in)
+    const weeklyTicketsResolved = normalizedRecords.map((record: KPIRecord) => record.tickets_resolved)
+    const weeklyFrt = normalizedRecords.map((record: KPIRecord) => record.frt_median)
+    const weeklyAht = normalizedRecords.map((record: KPIRecord) => record.aht)
+    const weeklyFcr = normalizedRecords.map((record: KPIRecord) => record.fcr_percent)
+    const weeklyLabels = normalizedRecords.map((record: KPIRecord) => record.week_label)
 
     // Transform Supabase data to match the expected API response format
     const response = {
