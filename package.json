@@ -1,14 +1,15 @@
 {
   "name": "cs-kpi-dashboard",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "kpi-sync": "ts-node --transpile-only scripts/sync-kpi.ts",
-    "kpi-sync:dev": "dotenv -e .env.local -- ts-node --transpile-only scripts/sync-kpi.ts"
+    "kpi-sync": "tsx scripts/sync-kpi.ts",
+    "kpi-sync:dev": "dotenv -e .env.local -- tsx scripts/sync-kpi.ts"
   },
   "dependencies": {
     "@radix-ui/react-tabs": "^1.1.13",
