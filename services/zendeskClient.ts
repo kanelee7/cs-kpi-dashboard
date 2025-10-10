@@ -10,12 +10,32 @@ export interface ZendeskClientConfig {
   delayMs?: number;
 }
 
+export interface ZendeskMetricTime {
+  calendar: number | null;
+  business: number | null;
+}
+
+export interface ZendeskMetricSet {
+  ticket_id: number;
+  latest_comment_added_at?: string | null;
+  solved_at?: string | null;
+  first_resolution_time_in_minutes?: ZendeskMetricTime | null;
+  full_resolution_time_in_minutes?: ZendeskMetricTime | null;
+  first_reply_time_in_minutes?: ZendeskMetricTime | null;
+  reply_time_in_minutes?: ZendeskMetricTime | null;
+  agent_wait_time_in_minutes?: ZendeskMetricTime | null;
+  requester_wait_time_in_minutes?: ZendeskMetricTime | null;
+  on_hold_time_in_minutes?: ZendeskMetricTime | null;
+  reopens?: number | null;
+  replies?: number | null;
+  touches?: number | null;
+}
+
 export interface ZendeskTicket {
   id: number;
   created_at: string;
   updated_at: string;
   status: string;
-  first_response_time: number | null;
   solved_at: string | null;
   requester_id: number;
   assignee_id: number | null;
@@ -27,17 +47,19 @@ export interface ZendeskTicket {
   description: string;
   priority: string | null;
   type: string | null;
-}
-
-export interface ZendeskTicketMetrics {
-  first_reply_time_in_minutes?: number | null;
-  reply_time_in_minutes?: number | null;
-  requester_wait_time_in_minutes?: number | null;
+  metric_set?: ZendeskMetricSet | null;
+  first_reply_time_minutes?: number | null;
+  full_resolution_time_minutes?: number | null;
+  agent_wait_time_minutes?: number | null;
+  requester_wait_time_minutes?: number | null;
+  replies?: number | null;
+  reopens?: number | null;
 }
 
 interface ZendeskTicketListResponse {
   tickets: ZendeskTicket[];
   next_page?: string | null;
+  metric_sets?: ZendeskMetricSet[];
 }
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -131,22 +153,34 @@ export class ZendeskClient {
       console.log(`[ZendeskClient] Fetching page ${page} with URL: ${nextPageUrl}`);
 
       try {
-        const data: any = await this.fetchJson<ZendeskTicketListResponse>(nextPageUrl);
+        const data: ZendeskTicketListResponse = await this.fetchJson<ZendeskTicketListResponse>(nextPageUrl);
         const tickets: ZendeskTicket[] = data.tickets ?? [];
-        
-        // Zendesk Analytics와 동일한 방식으로 solved_at 설정
-        const processedTickets = tickets.map((ticket: any) => {
-          // metric_sets에서 정확한 해결 시간 사용
-          const metrics = ticket.metric_sets?.ticket_metric_events?.find((m: any) => m.id === ticket.id);
+        const metricSets = data.metric_sets ?? [];
+
+        const metricMap = new Map<number, ZendeskMetricSet>();
+        for (const metric of metricSets) {
+          metricMap.set(metric.ticket_id, metric);
+        }
+
+        const processedTickets = tickets.map(ticket => {
+          const metrics = metricMap.get(ticket.id) ?? null;
+
+          const firstReplyMinutes = metrics?.first_reply_time_in_minutes?.calendar ?? null;
+          const fullResolutionMinutes = metrics?.full_resolution_time_in_minutes?.calendar ?? null;
+          const agentWaitMinutes = metrics?.agent_wait_time_in_minutes?.calendar ?? null;
+          const requesterWaitMinutes = metrics?.requester_wait_time_in_minutes?.calendar ?? null;
           const solvedAt = metrics?.solved_at || ticket.solved_at;
-          
+
           return {
             ...ticket,
             solved_at: solvedAt,
-            // 추가 메트릭 정보
-            first_reply_time: metrics?.first_reply_time_in_minutes || null,
-            full_resolution_time: metrics?.full_resolution_time_in_minutes || null,
-            requester_wait_time: metrics?.requester_wait_time_in_minutes || null,
+            metric_set: metrics,
+            first_reply_time_minutes: firstReplyMinutes,
+            full_resolution_time_minutes: fullResolutionMinutes,
+            agent_wait_time_minutes: agentWaitMinutes,
+            requester_wait_time_minutes: requesterWaitMinutes,
+            replies: metrics?.replies ?? null,
+            reopens: metrics?.reopens ?? null,
           };
         });
 
@@ -185,14 +219,31 @@ export class ZendeskClient {
     return collected;
   }
 
-  async getTicketMetrics(ticketId: number): Promise<ZendeskTicketMetrics | null> {
+  async getTicketMetrics(ticketId: number): Promise<ZendeskMetricSet | null> {
     const url = `${this.baseUrl}/tickets/${ticketId}/metrics.json`;
 
     try {
-      const data: { ticket_metric?: ZendeskTicketMetrics | null } = await this.fetchJson<{
-        ticket_metric?: ZendeskTicketMetrics | null;
-      }>(url);
-      return data.ticket_metric ?? null;
+      const data = await this.fetchJson<{ ticket_metric?: any | null }>(url);
+      const metric = data.ticket_metric;
+      if (!metric) {
+        return null;
+      }
+
+      return {
+        ticket_id: metric.ticket_id ?? ticketId,
+        latest_comment_added_at: metric.latest_comment_added_at ?? null,
+        solved_at: metric.solved_at ?? null,
+        first_resolution_time_in_minutes: metric.first_resolution_time_in_minutes ?? null,
+        full_resolution_time_in_minutes: metric.full_resolution_time_in_minutes ?? null,
+        first_reply_time_in_minutes: metric.first_reply_time_in_minutes ?? null,
+        reply_time_in_minutes: metric.reply_time_in_minutes ?? null,
+        agent_wait_time_in_minutes: metric.agent_wait_time_in_minutes ?? null,
+        requester_wait_time_in_minutes: metric.requester_wait_time_in_minutes ?? null,
+        on_hold_time_in_minutes: metric.on_hold_time_in_minutes ?? null,
+        reopens: metric.reopens ?? null,
+        replies: metric.replies ?? null,
+        touches: metric.touches ?? null,
+      } as ZendeskMetricSet;
     } catch (error) {
       console.error(`[ZendeskClient] Failed to fetch metrics for ticket ${ticketId}:`, error);
       return null;

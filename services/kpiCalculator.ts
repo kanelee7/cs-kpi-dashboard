@@ -6,8 +6,8 @@ const MAX_AHT_HOURS = 168; // 7 days (Zendesk 표준)
 const MAX_AHT_MINUTES = MAX_AHT_HOURS * 60;
 const FCR_ONE_TOUCH_HOURS = 24; // 24시간 내 1차 해결
 const FCR_TWO_TOUCH_HOURS = 72; // 72시간 내 2차 해결
-const FRT_WINDOW_DAYS = 30; // FRT 계산 기간
-const AHT_WINDOW_DAYS = 30; // AHT 계산 기간
+const FRT_WINDOW_DAYS = 45; // FRT 계산 기간 확장
+const AHT_WINDOW_DAYS = 45; // AHT 계산 기간 확장
 
 // Zendesk와 동일한 버킷 기준 (분 단위)
 const FRT_BUCKETS = {
@@ -70,6 +70,50 @@ const EMPTY_FCR_BREAKDOWN: FCRBreakdown = {
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
+function cloneDistribution(): FRTDistribution {
+  return { ...EMPTY_DISTRIBUTION };
+}
+
+function getFirstReplyMinutes(ticket: ZendeskTicket): number | null {
+  if (typeof ticket.first_reply_time_minutes === 'number') {
+    return ticket.first_reply_time_minutes;
+  }
+
+  const metricValue = ticket.metric_set?.first_reply_time_in_minutes?.calendar ?? null;
+  if (typeof metricValue === 'number') {
+    return metricValue;
+  }
+
+  return getMinutesBetween(ticket.created_at, ticket.updated_at);
+}
+
+function getResolutionMinutes(ticket: ZendeskTicket): number | null {
+  if (typeof ticket.full_resolution_time_minutes === 'number') {
+    return ticket.full_resolution_time_minutes;
+  }
+
+  const metricValue = ticket.metric_set?.full_resolution_time_in_minutes?.calendar ?? null;
+  if (typeof metricValue === 'number') {
+    return metricValue;
+  }
+
+  return getMinutesBetween(ticket.created_at, ticket.metric_set?.solved_at ?? ticket.solved_at ?? ticket.updated_at);
+}
+
+function getSolvedDate(ticket: ZendeskTicket): Date | null {
+  const solvedAt = ticket.metric_set?.solved_at || ticket.solved_at || null;
+  if (!solvedAt) {
+    return null;
+  }
+
+  const solvedDate = new Date(solvedAt);
+  if (isNaN(solvedDate.getTime())) {
+    return null;
+  }
+
+  return solvedDate;
+}
+
 export function calculateKPIsForWeek(
   tickets: ZendeskTicket[],
   weekStart: Date,
@@ -79,54 +123,58 @@ export function calculateKPIsForWeek(
   
   // Tickets created in the target week
   const weekTickets = filterTicketsByCreatedAt(tickets, weekStart, weekEnd);
-  debug(`Found ${weekTickets.length} tickets created in target week`);
   
   // Tickets resolved in the target week
   const resolvedTickets = filterTicketsBySolvedAt(tickets, weekStart, weekEnd);
   debug(`Found ${resolvedTickets.length} tickets resolved in target week`);
 
-  // FRT Calculation (30-day window)
+  // FRT Calculation (using Zendesk metrics with relaxed filters)
   const frtRangeStart = new Date(weekEnd.getTime() - FRT_WINDOW_DAYS * DAY_IN_MS);
-  const frtTickets = filterTicketsByCreatedAt(tickets, frtRangeStart, weekEnd)
-    .filter(ticket => ticket.status === 'solved' || ticket.status === 'closed');
-  
-  const frtValuesMinutes = frtTickets
-    .map(ticket => getMinutesBetween(ticket.created_at, ticket.updated_at))
-    .filter((value): value is number => value !== null && value > 0 && value <= 1440); // Cap at 24h for FRT
-  
-  const frtDistribution = buildFRTDistribution(frtValuesMinutes, weekTickets);
-  const frtMedian = frtValuesMinutes.length > 0 
-    ? roundTo(calculateMedian(frtValuesMinutes) / 60, 1) 
-    : 0;
-  
-  debug(`FRT: ${frtValuesMinutes.length} valid tickets, median: ${frtMedian}h`);
+  const frtWindowTickets = filterTicketsByCreatedAt(tickets, frtRangeStart, weekEnd);
+  const frtWindowMeasurements = frtWindowTickets.map(ticket => ({
+    ticket,
+    minutes: getFirstReplyMinutes(ticket)
+  }));
 
-  // AHT Calculation (30-day window, same as FRT for consistency)
+  const frtValuesMinutes = frtWindowMeasurements
+    .map(measurement => measurement.minutes)
+    .filter((value): value is number => value !== null && value >= 0 && value <= 72 * 60);
+
+  const frtDistribution = buildFRTDistribution(
+    weekTickets,
+    weekTickets.map(ticket => ({ ticket, minutes: getFirstReplyMinutes(ticket) }))
+  );
+
+  const frtMedian = frtValuesMinutes.length > 0
+    ? roundTo(calculateMedian(frtValuesMinutes) / 60, 1)
+    : 0;
+
+  debug(`FRT (single week): ${frtValuesMinutes.length} measurements (window), median: ${frtMedian}h`);
+
+  // AHT Calculation (45-day window, leveraging metric sets)
   const ahtRangeStart = new Date(weekEnd.getTime() - AHT_WINDOW_DAYS * DAY_IN_MS);
-  const ahtTickets = filterTicketsBySolvedAt(tickets, ahtRangeStart, weekEnd)
-    .filter(ticket => ticket.status === 'solved' || ticket.status === 'closed');
-  
+  const ahtTickets = filterTicketsBySolvedAt(tickets, ahtRangeStart, weekEnd);
+
+  debug(`AHT: ${ahtTickets.length} valid tickets (window)`);
   const ahtValues = ahtTickets
     .map(ticket => {
-      // Only use solved_at for AHT calculation, no fallback to updated_at
-      if (!ticket.solved_at) return null;
-      return getHoursBetween(ticket.created_at, ticket.solved_at);
+      const minutes = getResolutionMinutes(ticket);
+      if (minutes === null) {
+        return null;
+      }
+      const hours = minutes / 60;
+      return hours > 0 && hours <= MAX_AHT_HOURS ? hours : null;
     })
-    .filter((value): value is number => 
-      value !== null && 
-      value > 0 && 
-      value <= MAX_AHT_HOURS // Cap at 7 days
-    );
-  
-  const aht = ahtValues.length > 0 
-    ? roundTo(ahtValues.reduce((sum, value) => sum + value, 0) / ahtValues.length, 2) 
+    .filter((value): value is number => value !== null);
+
+  const aht = ahtValues.length > 0
+    ? roundTo(ahtValues.reduce((sum, value) => sum + value, 0) / ahtValues.length, 2)
     : 0;
-  
+
   debug(`AHT: ${ahtValues.length} valid tickets, average: ${aht}h`);
 
   // FCR Calculation (using same ticket set as AHT for consistency)
   const { fcrPercent, fcrBreakdown } = buildFCRMetrics(ahtTickets);
-
   return {
     ticketsIn: weekTickets.length,
     ticketsResolved: resolvedTickets.length,
@@ -143,27 +191,23 @@ export function calculateKPIs(tickets: ZendeskTicket[], referenceDate: Date = ne
   return calculateKPIsForWeek(tickets, startDate, endDate);
 }
 
-function buildFRTDistribution(frtValuesMinutes: number[], weekTickets: ZendeskTicket[]): FRTDistribution {
-  const distribution: FRTDistribution = { ...EMPTY_DISTRIBUTION };
-  const repliedTicketIds = new Set<number>();
+type FRTMeasurement = {
+  ticket: ZendeskTicket;
+  minutes: number | null;
+};
 
-  // Process tickets with replies
-  frtValuesMinutes.forEach((minutes, index) => {
-    const ticket = weekTickets[index];
-    if (!ticket) return;
-    
-    repliedTicketIds.add(ticket.id);
-    
-    // Skip invalid or negative values
-    if (minutes <= 0) {
-      debug('Skipping invalid FRT value', { ticketId: ticket.id, minutes });
+function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMeasurement[]): FRTDistribution {
+  const distribution = cloneDistribution();
+  const repliedIds = new Set<number>();
+
+  measurements.forEach(({ ticket, minutes }) => {
+    if (minutes === null || minutes <= 0) {
       return;
     }
 
-    // Convert to hours for bucketing
+    repliedIds.add(ticket.id);
+
     const hours = minutes / 60;
-    
-    // Categorize into time buckets (matching Zendesk Analytics)
     if (hours <= 1) {
       distribution['0-1h']++;
     } else if (hours <= 8) {
@@ -175,18 +219,13 @@ function buildFRTDistribution(frtValuesMinutes: number[], weekTickets: ZendeskTi
     }
   });
 
-  // Calculate "No Reply" tickets (tickets without a first reply)
-  const noReplyTickets = weekTickets.filter(ticket => 
-    !repliedTicketIds.has(ticket.id) && 
-    (ticket.status === 'open' || ticket.status === 'pending')
-  );
-  
-  distribution['No Reply'] = noReplyTickets.length;
-  
+  const noReplyCount = weekTickets.filter(ticket => !repliedIds.has(ticket.id)).length;
+  distribution['No Reply'] = noReplyCount;
+
   debug('FRT Distribution', {
     totalTickets: weekTickets.length,
-    withReplies: frtValuesMinutes.length,
-    noReply: noReplyTickets.length,
+    withReplies: repliedIds.size,
+    noReply: noReplyCount,
     distribution: { ...distribution }
   });
 
@@ -196,121 +235,42 @@ function buildFRTDistribution(frtValuesMinutes: number[], weekTickets: ZendeskTi
 function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBreakdown: FCRBreakdown } {
   if (tickets.length === 0) {
     debug('No tickets provided for FCR calculation');
-    return { fcrPercent: 0, fcrBreakdown: { oneTouch: 0, twoTouch: 0, reopened: 0 } };
+    return { fcrPercent: 0, fcrBreakdown: { ...EMPTY_FCR_BREAKDOWN } };
   }
 
   let oneTouch = 0;
   let twoTouch = 0;
   let reopened = 0;
-  let invalidTickets = 0;
-  const validTickets: ZendeskTicket[] = [];
 
-  // First pass: Filter valid tickets
   tickets.forEach(ticket => {
-    // Only include solved/closed tickets
-    if (ticket.status !== 'solved' && ticket.status !== 'closed') {
-      debug('Skipping non-resolved ticket', { 
-        ticketId: ticket.id, 
-        status: ticket.status 
-      });
-      invalidTickets++;
-      return;
-    }
+    const touches = ticket.metric_set?.touches ?? ticket.metric_set?.replies ?? ticket.replies ?? 0;
+    const reopenCount = ticket.metric_set?.reopens ?? ticket.reopens ?? 0;
 
-    // Must have both created_at and solved_at
-    if (!ticket.created_at || !ticket.solved_at) {
-      debug('Missing timestamps', { 
-        ticketId: ticket.id, 
-        hasCreated: !!ticket.created_at,
-        hasSolved: !!ticket.solved_at
-      });
-      invalidTickets++;
-      return;
-    }
-
-    // Calculate solve time in hours
-    const solveTimeHours = getHoursBetween(ticket.created_at, ticket.solved_at);
-    if (solveTimeHours === null || solveTimeHours <= 0) {
-      debug('Invalid solve time', { 
-        ticketId: ticket.id, 
-        solveTimeHours,
-        created: ticket.created_at,
-        solved: ticket.solved_at
-      });
-      invalidTickets++;
-      return;
-    }
-
-    validTickets.push(ticket);
-  });
-
-  debug('FCR - Valid tickets for calculation', { 
-    total: tickets.length,
-    valid: validTickets.length,
-    invalid: invalidTickets
-  });
-
-  if (validTickets.length === 0) {
-    return { 
-      fcrPercent: 0, 
-      fcrBreakdown: { oneTouch: 0, twoTouch: 0, reopened: 0 } 
-    };
-  }
-
-  // Second pass: Calculate FCR metrics
-  validTickets.forEach(ticket => {
-    const solveTimeHours = getHoursBetween(ticket.created_at, ticket.solved_at!)!;
-    
-    // Check for reopened tickets (Zendesk considers these as not FCR)
-    const isReopened = ticket.tags?.includes('reopened') || 
-                      ticket.tags?.includes('follow_up') ||
-                      (ticket.custom_fields?.some((f: any) => 
-                        f.id === 'reopened' && f.value === true
-                      ));
-
-    if (isReopened) {
+    if (reopenCount && reopenCount > 0) {
       reopened++;
-      debug('FCR - Reopened ticket', { 
-        ticketId: ticket.id, 
-        solveTimeHours,
-        tags: ticket.tags,
-        customFields: ticket.custom_fields
-      });
-    } else if (solveTimeHours <= FCR_ONE_TOUCH_HOURS) {
+      return;
+    }
+
+    if (touches <= 1) {
       oneTouch++;
-      debug('FCR - One touch resolution', { 
-        ticketId: ticket.id, 
-        solveTimeHours,
-        maxAllowed: FCR_ONE_TOUCH_HOURS
-      });
-    } else if (solveTimeHours <= FCR_TWO_TOUCH_HOURS) {
+    } else if (touches <= 2) {
       twoTouch++;
-      debug('FCR - Two touch resolution', { 
-        ticketId: ticket.id, 
-        solveTimeHours,
-        maxAllowed: FCR_TWO_TOUCH_HOURS
-      });
     } else {
       reopened++;
-      debug('FCR - Long resolution time', { 
-        ticketId: ticket.id, 
-        solveTimeHours,
-        maxAllowed: FCR_TWO_TOUCH_HOURS
-      });
     }
   });
 
-  // Calculate FCR percentage (one-touch and two-touch resolutions as percentage of valid tickets)
-  const fcrPercent = ((oneTouch + twoTouch) / validTickets.length) * 100;
-  
+  const validCount = tickets.length;
+  const fcrPercent = validCount > 0 ? ((oneTouch + twoTouch) / validCount) * 100 : 0;
+
   debug('FCR - Final calculation', {
-    totalTickets: validTickets.length,
+    totalTickets: validCount,
     oneTouch,
     twoTouch,
     reopened,
     fcrPercent: roundTo(fcrPercent, 1) + '%'
   });
-  
+
   return {
     fcrPercent: roundTo(fcrPercent, 1),
     fcrBreakdown: {
@@ -329,31 +289,22 @@ function filterTicketsByCreatedAt(tickets: ZendeskTicket[], start: Date, end: Da
 }
 
 function filterTicketsBySolvedAt(tickets: ZendeskTicket[], start: Date, end: Date): ZendeskTicket[] {
-  return tickets.filter((ticket) => {
-    // Only consider tickets that are actually solved/closed
-    if (!ticket.solved_at && !(ticket.status === 'solved' || ticket.status === 'closed')) {
-      return false;
-    }
-    
-    // Prefer solved_at, fall back to updated_at only if the ticket is actually solved/closed
-    const solvedDate = ticket.solved_at || 
-                      ((ticket.status === 'solved' || ticket.status === 'closed') ? ticket.updated_at : null);
-
+  return tickets.filter(ticket => {
+    const solvedDate = getSolvedDate(ticket);
     if (!solvedDate) {
       return false;
     }
 
-    const solved = new Date(solvedDate);
-    const isInRange = solved >= start && solved <= end;
-    
+    const isInRange = solvedDate >= start && solvedDate <= end;
+
     if (!isInRange) {
-      debug(`Ticket ${ticket.id} solved outside date range`, { 
-        solved: solvedDate, 
+      debug(`Ticket ${ticket.id} solved outside date range`, {
+        solved: solvedDate,
         range: { start, end },
         status: ticket.status
       });
     }
-    
+
     return isInRange;
   });
 }

@@ -1,6 +1,40 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+type FRTDistribution = Record<'0-1h' | '1-8h' | '8-24h' | '>24h' | 'No Reply', number>
+
+type FCRBreakdown = {
+  oneTouch: number
+  twoTouch: number
+  reopened: number
+}
+
+const EMPTY_FRT_DISTRIBUTION: FRTDistribution = {
+  '0-1h': 0,
+  '1-8h': 0,
+  '8-24h': 0,
+  '>24h': 0,
+  'No Reply': 0
+}
+
+const EMPTY_FCR_BREAKDOWN: FCRBreakdown = {
+  oneTouch: 0,
+  twoTouch: 0,
+  reopened: 0
+}
+
+function createEmptyDistribution(): FRTDistribution {
+  return { ...EMPTY_FRT_DISTRIBUTION }
+}
+
+function cloneDistribution(distribution: FRTDistribution): FRTDistribution {
+  return { ...distribution }
+}
+
+function cloneBreakdown(breakdown: FCRBreakdown): FCRBreakdown {
+  return { ...breakdown }
+}
+
 // Zendesk 주차 번호 계산 (일요일 기준)
 function getZendeskWeekNumber(date: Date): number {
   const year = date.getUTCFullYear()
@@ -19,6 +53,18 @@ function getZendeskWeekNumber(date: Date): number {
   return Math.max(1, diffWeeks + 1) // 최소 1주차
 }
 
+function formatWeekRange(startDateString: string, endDateString: string): string {
+  const start = new Date(startDateString)
+  const end = new Date(endDateString)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'Asia/Seoul'
+  })
+
+  return `${formatter.format(start)} – ${formatter.format(end)}`
+}
+
 type KPIRecord = {
   brand: string
   week_start_date: string
@@ -29,12 +75,16 @@ type KPIRecord = {
   frt_median: number
   aht: number
   fcr_percent: number
-  frt_distribution: Record<string, number> | null
-  fcr_breakdown: Record<string, number> | null
+  frt_distribution: FRTDistribution | null
+  fcr_breakdown: FCRBreakdown | null
 }
 
 function normalizeRecords(records: KPIRecord[], brand: string): KPIRecord[] {
-  const parsed = [...records]
+  const parsed = [...records].map(record => ({
+    ...record,
+    frt_distribution: record.frt_distribution ? cloneDistribution(record.frt_distribution) : createEmptyDistribution(),
+    fcr_breakdown: record.fcr_breakdown ? cloneBreakdown(record.fcr_breakdown) : { ...EMPTY_FCR_BREAKDOWN }
+  }))
 
   if (brand !== 'all') {
     return parsed
@@ -51,8 +101,8 @@ function normalizeRecords(records: KPIRecord[], brand: string): KPIRecord[] {
     frtValues: number[]
     ahtValues: number[]
     fcrValues: number[]
-    frt_distribution: Record<string, number>
-    fcr_breakdown: Record<string, number>
+    frt_distribution: FRTDistribution
+    fcr_breakdown: FCRBreakdown
   }>()
 
   parsed.forEach((record: KPIRecord) => {
@@ -67,8 +117,8 @@ function normalizeRecords(records: KPIRecord[], brand: string): KPIRecord[] {
         frtValues: [],
         ahtValues: [],
         fcrValues: [],
-        frt_distribution: {},
-        fcr_breakdown: {}
+        frt_distribution: createEmptyDistribution(),
+        fcr_breakdown: { ...EMPTY_FCR_BREAKDOWN }
       })
     }
 
@@ -82,14 +132,18 @@ function normalizeRecords(records: KPIRecord[], brand: string): KPIRecord[] {
     if (record.frt_distribution) {
       for (const [label, value] of Object.entries(record.frt_distribution)) {
         const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
-        bucket.frt_distribution[label] = (bucket.frt_distribution[label] || 0) + numericValue
+        if (label in bucket.frt_distribution) {
+          bucket.frt_distribution[label as keyof FRTDistribution] += numericValue
+        }
       }
     }
 
     if (record.fcr_breakdown) {
       for (const [label, value] of Object.entries(record.fcr_breakdown)) {
         const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
-        bucket.fcr_breakdown[label] = (bucket.fcr_breakdown[label] || 0) + numericValue
+        if (label in bucket.fcr_breakdown) {
+          bucket.fcr_breakdown[label as keyof FCRBreakdown] += numericValue
+        }
       }
     }
   })
@@ -105,8 +159,8 @@ function normalizeRecords(records: KPIRecord[], brand: string): KPIRecord[] {
       frt_median: average(bucket.frtValues),
       aht: average(bucket.ahtValues),
       fcr_percent: average(bucket.fcrValues),
-      frt_distribution: bucket.frt_distribution,
-      fcr_breakdown: bucket.fcr_breakdown
+      frt_distribution: cloneDistribution(bucket.frt_distribution),
+      fcr_breakdown: cloneBreakdown(bucket.fcr_breakdown)
     }))
     .sort((a, b) => new Date(a.week_start_date).getTime() - new Date(b.week_start_date).getTime())
     .slice(-5)
@@ -168,6 +222,14 @@ export async function GET(request: Request) {
       return NextResponse.json(getSampleData(brand))
     }
 
+    const weeklyWeekNumbers = normalizedRecords.map(record =>
+      getZendeskWeekNumber(new Date(record.week_start_date))
+    )
+    const weeklyLabels = weeklyWeekNumbers.map(weekNumber => `Week ${weekNumber}`)
+    const weeklyRanges = normalizedRecords.map(record =>
+      formatWeekRange(record.week_start_date, record.week_end_date)
+    )
+
     const latestRecord = normalizedRecords[normalizedRecords.length - 1]
 
     const weeklyTicketsIn = normalizedRecords.map((record: KPIRecord) => record.tickets_in)
@@ -175,7 +237,6 @@ export async function GET(request: Request) {
     const weeklyFrt = normalizedRecords.map((record: KPIRecord) => record.frt_median)
     const weeklyAht = normalizedRecords.map((record: KPIRecord) => record.aht)
     const weeklyFcr = normalizedRecords.map((record: KPIRecord) => record.fcr_percent)
-    const weeklyLabels = normalizedRecords.map((record: KPIRecord) => record.week_label)
 
     // Transform Supabase data to match the expected API response format
     const response = {
@@ -190,12 +251,17 @@ export async function GET(request: Request) {
       weeklyTicketsIn,
       weeklyTicketsResolved,
       weeklyLabels,
+      weeklyRanges,
       trends: {
         frt: weeklyFrt,
         aht: weeklyAht,
         fcr: weeklyFcr,
         csat: [4.0, 4.1, 3.9, 4.2, 4.2] // Default CSAT values
       },
+      latestWeekLabel: weeklyLabels[weeklyLabels.length - 1],
+      latestWeekRange: weeklyRanges[weeklyRanges.length - 1],
+      latestWeekStartDate: latestRecord.week_start_date,
+      latestWeekEndDate: latestRecord.week_end_date,
       csatAverage: 4.2, // Default CSAT value
       avgHandleTime: latestRecord.aht,
       fcrRate: latestRecord.fcr_percent
