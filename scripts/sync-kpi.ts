@@ -1,7 +1,7 @@
 import { ZendeskClient } from '../services/zendeskClient';
 import { getSupabaseClient, upsertKPI } from '../services/supabaseService';
-import { calculateKPIs } from '../services/kpiCalculator';
-import { getDateRange } from '../utils/dateUtils';
+import { calculateKPIsForWeek } from '../services/kpiCalculator';
+import { getWeekRange } from '../utils/dateUtils';
 
 // 환경 변수 확인
 const requiredEnvVars = [
@@ -32,51 +32,57 @@ async function main() {
     
     const supabaseClient = getSupabaseClient();
 
-    // 2. 날짜 범위 설정 (지난 주 데이터 가져오기)
-    const today = new Date();
-    const { start: weekStart, end: weekEnd } = getDateRange(today, 'week');
-    console.log(`Fetching data for week: ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
-
-    // 3. Zendesk에서 티켓 데이터 가져오기 (지난 30일 데이터를 가져와서 필터링)
+    // 2. Zendesk에서 티켓 데이터 가져오기 (최근 60일)
     console.log('Fetching tickets from Zendesk...');
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const allTickets = await zendeskClient.getAllTickets(thirtyDaysAgo.toISOString());
-    
-    // 주간 티켓 필터링
-    const tickets = allTickets.filter(ticket => {
-      const createdAt = new Date(ticket.created_at);
-      return createdAt >= weekStart && createdAt <= weekEnd;
-    });
-    console.log(`Fetched ${tickets.length} tickets`);
+    const lookbackStart = new Date();
+    lookbackStart.setDate(lookbackStart.getDate() - 60);
+    const allTickets = await zendeskClient.getAllTickets(lookbackStart.toISOString());
+    console.log(`Fetched ${allTickets.length} tickets in lookback window`);
 
-    if (tickets.length === 0) {
-      console.log('No tickets found for the specified date range');
+    if (allTickets.length === 0) {
+      console.log('No tickets fetched from Zendesk; aborting sync.');
       return;
     }
 
-    // 4. KPI 계산
-    console.log('Calculating KPIs...');
-    const kpiData = calculateKPIs(tickets, today);
-    
-    // 5. 결과 출력 (디버깅용)
-    console.log('Calculated KPIs:', {
-      ticketsIn: kpiData.ticketsIn,
-      ticketsResolved: kpiData.ticketsResolved,
-      frtMedian: kpiData.frtMedian,
-      aht: kpiData.aht,
-      fcrPercent: kpiData.fcrPercent,
-    });
+    // 3. 최근 5주(현재 주 포함) KPI 계산 및 저장
+    const HISTORY_WEEKS = 5;
+    for (let offset = HISTORY_WEEKS - 1; offset >= 0; offset--) {
+      const { start: weekStart, end: weekEnd } = getWeekRange(offset);
+      console.log(`Calculating KPIs for week ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
 
-    // 6. Supabase에 저장
-    console.log('Saving to Supabase...');
-    await upsertKPI(supabaseClient, {
-      ...kpiData,
-      brand: 'default', // 브랜드 정보가 필요한 경우 수정
-      weekStartDate: weekStart,
-      weekEndDate: weekEnd,
-      weekLabel: `Week of ${weekStart.toISOString().split('T')[0]}`,
-    });
+      const kpiData = calculateKPIsForWeek(allTickets, weekStart, weekEnd);
+
+      // 유의미한 데이터가 없는 주는 건너뜁니다.
+      const hasMeaningfulData =
+        kpiData.ticketsIn > 0 ||
+        kpiData.ticketsResolved > 0 ||
+        Object.values(kpiData.frtDistribution).some(value => value > 0) ||
+        kpiData.fcrPercent > 0 ||
+        kpiData.aht > 0;
+
+      if (!hasMeaningfulData) {
+        console.log('Skipping week with no meaningful data');
+        continue;
+      }
+
+      console.log('Calculated KPIs:', {
+        weekLabel: `Week of ${weekStart.toISOString().split('T')[0]}`,
+        ticketsIn: kpiData.ticketsIn,
+        ticketsResolved: kpiData.ticketsResolved,
+        frtMedian: kpiData.frtMedian,
+        aht: kpiData.aht,
+        fcrPercent: kpiData.fcrPercent,
+      });
+
+      console.log('Saving to Supabase...');
+      await upsertKPI(supabaseClient, {
+        ...kpiData,
+        brand: 'default',
+        weekStartDate: weekStart,
+        weekEndDate: weekEnd,
+        weekLabel: `Week of ${weekStart.toISOString().split('T')[0]}`,
+      });
+    }
 
     console.log('KPI sync completed successfully');
   } catch (error) {
