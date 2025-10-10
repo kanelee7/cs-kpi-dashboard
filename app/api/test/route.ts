@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function GET() {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL_2;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY_2;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
       return NextResponse.json(
