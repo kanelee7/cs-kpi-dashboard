@@ -46,7 +46,13 @@ export default function DashboardPage() {
           throw new Error('Failed to fetch KPI data')
         }
         const data = await response.json()
-        setKpiData(data)
+        // Ensure data is an array before setting state
+        if (Array.isArray(data)) {
+          setKpiData(data)
+        } else {
+          console.error('Expected array but got:', data)
+          setKpiData([])
+        }
       } catch (error) {
         console.error('Error fetching KPI data:', error)
       } finally {
