@@ -233,74 +233,129 @@ function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMea
 }
 
 function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBreakdown: FCRBreakdown } {
-  if (tickets.length === 0) {
-    debug('No tickets provided for FCR calculation');
-    return { fcrPercent: 0, fcrBreakdown: { ...EMPTY_FCR_BREAKDOWN } };
+  const breakdown: FCRBreakdown = { oneTouch: 0, twoTouch: 0, reopened: 0 };
+  
+  for (const ticket of tickets) {
+    const solvedAt = ticket.metric_set?.solved_at;
+    if (!solvedAt) continue;
+
+    // FCR 조건: 재오픈(reopens)이 0인 경우 FCR 성공
+    const isFCR = (ticket.metric_set?.reopens ?? 0) === 0;
+    const resolutionTime = getHoursBetween(ticket.created_at, solvedAt);
+    
+    if (resolutionTime === null) continue;
+
+    if (!isFCR) {
+      breakdown.reopened++;
+    } else if (resolutionTime <= FCR_ONE_TOUCH_HOURS) {
+      breakdown.oneTouch++;
+    } else if (resolutionTime <= FCR_TWO_TOUCH_HOURS) {
+      breakdown.twoTouch++;
+    } else {
+      // 72시간 초과지만 재오픈은 없는 경우
+      breakdown.twoTouch++;
+    }
   }
 
-  let oneTouch = 0;
-  let twoTouch = 0;
-  let reopened = 0;
+  const totalFCR = breakdown.oneTouch + breakdown.twoTouch;
+  const totalTickets = totalFCR + breakdown.reopened;
+  
+  // FCR% = (1차 + 2차 해결) / (1차 + 2차 + 재오픈) * 100
+  const fcrPercent = totalTickets > 0 
+    ? (totalFCR / totalTickets) * 100 
+    : 0;
 
-  tickets.forEach(ticket => {
-    const touches = ticket.metric_set?.touches ?? ticket.metric_set?.replies ?? ticket.replies ?? 0;
-    const reopenCount = ticket.metric_set?.reopens ?? ticket.reopens ?? 0;
-
-    if (reopenCount && reopenCount > 0) {
-      reopened++;
-      return;
-    }
-
-    if (touches <= 1) {
-      oneTouch++;
-    } else if (touches <= 2) {
-      twoTouch++;
-    } else {
-      reopened++;
-    }
-  });
-
-  const validCount = tickets.length;
-  const fcrPercent = validCount > 0 ? ((oneTouch + twoTouch) / validCount) * 100 : 0;
-
-  debug('FCR - Final calculation', {
-    totalTickets: validCount,
-    oneTouch,
-    twoTouch,
-    reopened,
+  debug('FCR 계산 결과', {
+    totalTickets,
+    oneTouch: breakdown.oneTouch,
+    twoTouch: breakdown.twoTouch,
+    reopened: breakdown.reopened,
     fcrPercent: roundTo(fcrPercent, 1) + '%'
   });
 
   return {
-    fcrPercent: roundTo(fcrPercent, 1),
+    fcrPercent,
     fcrBreakdown: {
-      oneTouch,
-      twoTouch,
-      reopened,
+      oneTouch: breakdown.oneTouch,
+      twoTouch: breakdown.twoTouch,
+      reopened: breakdown.reopened,
     },
   };
 }
 
 function filterTicketsByCreatedAt(tickets: ZendeskTicket[], start: Date, end: Date): ZendeskTicket[] {
-  return tickets.filter((ticket) => {
-    const created = new Date(ticket.created_at);
-    return created >= start && created <= end;
+  const startUTC = Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate(),
+    start.getUTCHours(),
+    start.getUTCMinutes(),
+    start.getUTCSeconds()
+  );
+  
+  const endUTC = Date.UTC(
+    end.getUTCFullYear(),
+    end.getUTCMonth(),
+    end.getUTCDate(),
+    end.getUTCHours(),
+    end.getUTCMinutes(),
+    end.getUTCSeconds()
+  );
+
+  return tickets.filter(ticket => {
+    const ticketDate = new Date(ticket.created_at);
+    const ticketUTC = Date.UTC(
+      ticketDate.getUTCFullYear(),
+      ticketDate.getUTCMonth(),
+      ticketDate.getUTCDate(),
+      ticketDate.getUTCHours(),
+      ticketDate.getUTCMinutes(),
+      ticketDate.getUTCSeconds()
+    );
+    
+    return ticketUTC >= startUTC && ticketUTC <= endUTC;
   });
 }
 
 function filterTicketsBySolvedAt(tickets: ZendeskTicket[], start: Date, end: Date): ZendeskTicket[] {
-  return tickets.filter(ticket => {
-    const solvedDate = getSolvedDate(ticket);
-    if (!solvedDate) {
-      return false;
-    }
+  const startUTC = Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate(),
+    start.getUTCHours(),
+    start.getUTCMinutes(),
+    start.getUTCSeconds()
+  );
+  
+  const endUTC = Date.UTC(
+    end.getUTCFullYear(),
+    end.getUTCMonth(),
+    end.getUTCDate(),
+    end.getUTCHours(),
+    end.getUTCMinutes(),
+    end.getUTCSeconds()
+  );
 
-    const isInRange = solvedDate >= start && solvedDate <= end;
+  return tickets.filter(ticket => {
+    const solvedAt = ticket.metric_set?.solved_at;
+    if (!solvedAt) return false;
+    
+    const solvedDate = new Date(solvedAt);
+    const solvedUTC = Date.UTC(
+      solvedDate.getUTCFullYear(),
+      solvedDate.getUTCMonth(),
+      solvedDate.getUTCDate(),
+      solvedDate.getUTCHours(),
+      solvedDate.getUTCMinutes(),
+      solvedDate.getUTCSeconds()
+    );
+    
+    const isInRange = solvedUTC >= startUTC && solvedUTC <= endUTC;
 
     if (!isInRange) {
       debug(`Ticket ${ticket.id} solved outside date range`, {
-        solved: solvedDate,
-        range: { start, end },
+        solved: solvedAt,
+        range: { start: start.toISOString(), end: end.toISOString() },
         status: ticket.status
       });
     }

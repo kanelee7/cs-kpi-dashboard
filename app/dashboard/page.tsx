@@ -35,7 +35,7 @@ export default function DashboardPage() {
   const [kpiData, setKpiData] = useState<KPIData[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedBrand, setSelectedBrand] = useState('all')
-  const [timeRange, setTimeRange] = useState('4w')
+  const [timeRange, setTimeRange] = useState('5w')
 
   useEffect(() => {
     const fetchData = async () => {
@@ -115,9 +115,9 @@ export default function DashboardPage() {
             onChange={(e) => setTimeRange(e.target.value)}
             className="px-4 py-2 border rounded-md"
           >
-            <option value="4w">최근 4주</option>
-            <option value="8w">최근 8주</option>
-            <option value="12w">최근 12주</option>
+            <option value="5w">최근 5주</option>
+            <option value="10w">최근 10주</option>
+            <option value="15w">최근 15주</option>
           </select>
         </div>
       </div>
@@ -247,7 +247,11 @@ export default function DashboardPage() {
                 <div className="h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
-                      data={[...kpiData].reverse()}
+                      data={kpiData.slice(-5).map((item, index, array) => ({
+                        ...item,
+                        // Ensure we're showing the most recent 5 weeks in chronological order
+                        week_label: array[array.length - 5 + index]?.week_label || item.week_label
+                      }))}
                       margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" />
@@ -301,7 +305,7 @@ export default function DashboardPage() {
               <div className="h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
-                    data={[...kpiData].reverse()}
+                    data={kpiData}
                     margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
@@ -327,7 +331,7 @@ export default function DashboardPage() {
               <div className="h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
-                    data={[...kpiData].reverse()}
+                    data={kpiData}
                     margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
