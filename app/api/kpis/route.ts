@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { getZendeskWeekNumber } from '../../../utils/dateUtils'
 
 type FRTDistribution = Record<'0-1h' | '1-8h' | '8-24h' | '>24h' | 'No Reply', number>
 
@@ -35,27 +36,10 @@ function cloneBreakdown(breakdown: FCRBreakdown): FCRBreakdown {
   return { ...breakdown }
 }
 
-// Zendesk 주차 번호 계산 (일요일 기준)
-function getZendeskWeekNumber(date: Date): number {
-  const year = date.getUTCFullYear()
-  const startOfYear = new Date(Date.UTC(year, 0, 1, 15, 0, 0)) // 1월 1일 KST 00:00
-
-  // 1월 1일이 일요일이 아닌 경우, 첫 번째 일요일을 찾음
-  const firstSunday = new Date(startOfYear)
-  const dayOfWeek = startOfYear.getUTCDay()
-  if (dayOfWeek !== 0) {
-    firstSunday.setUTCDate(startOfYear.getUTCDate() + (7 - dayOfWeek))
-  }
-
-  const diffTime = date.getTime() - firstSunday.getTime()
-  const diffWeeks = Math.floor(diffTime / (7 * 24 * 60 * 60 * 1000))
-
-  return Math.max(1, diffWeeks + 1) // 최소 1주차
-}
-
 function formatWeekRange(startDateString: string, endDateString: string): string {
   const start = new Date(startDateString)
   const end = new Date(endDateString)
+
   const formatter = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',

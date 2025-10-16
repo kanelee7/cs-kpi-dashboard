@@ -4,36 +4,38 @@ export interface WeekRange {
 }
 
 /**
- * Calculate Zendesk-style week number (weeks start on Sunday, KST).
+ * Calculate Zendesk-style week number (ISO 8601, weeks start on Monday in KST).
  */
 export function getZendeskWeekNumber(date: Date): number {
-  const utcDate = toKst(date);
-  const year = utcDate.getUTCFullYear();
-  const startOfYear = new Date(Date.UTC(year, 0, 1, 15, 0, 0));
+  const kstDate = toKst(date);
+  const target = new Date(Date.UTC(
+    kstDate.getUTCFullYear(),
+    kstDate.getUTCMonth(),
+    kstDate.getUTCDate()
+  ));
 
-  const dayOfWeek = startOfYear.getUTCDay();
-  const firstSunday = new Date(startOfYear);
-  if (dayOfWeek !== 0) {
-    firstSunday.setUTCDate(firstSunday.getUTCDate() + (7 - dayOfWeek));
-  }
+  const dayNumber = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - dayNumber + 3);
 
-  const diffTime = utcDate.getTime() - firstSunday.getTime();
-  const diffWeeks = Math.floor(diffTime / (7 * 24 * 60 * 60 * 1000));
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const firstDayNumber = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNumber + 3);
 
-  return Math.max(1, diffWeeks + 1);
+  const diff = target.getTime() - firstThursday.getTime();
+  return 1 + Math.round(diff / (7 * 24 * 60 * 60 * 1000));
 }
 
 /**
- * Returns the Sunday-Saturday week range (KST) for the given offset.
+ * Returns the Monday-Sunday week range (KST) for the given offset.
  * @param offsetWeeks 0 = current week, 1 = previous week, etc.
  */
 export function getWeekRange(offsetWeeks = 0): WeekRange {
   const now = toKst(new Date());
-  const day = now.getUTCDay();
-  const sunday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 15, 0, 0));
-  sunday.setUTCDate(sunday.getUTCDate() - day - offsetWeeks * 7);
+  const day = (now.getUTCDay() + 6) % 7;
+  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 15, 0, 0));
+  monday.setUTCDate(monday.getUTCDate() - day - offsetWeeks * 7);
 
-  const start = new Date(sunday);
+  const start = new Date(monday);
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 6);
   end.setUTCHours(14, 59, 59, 999);

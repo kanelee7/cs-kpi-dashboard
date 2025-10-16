@@ -1,4 +1,4 @@
-// File: C:\projects\cs-kpi-dashboard\app\api\kpis\route.ts
+// File: C:\project\cs-kpi-dashboard\app\api\kpis\route.ts
 import * as entry from '../../../../../app/api/kpis/route.js'
 import type { NextRequest } from 'next/server.js'
 

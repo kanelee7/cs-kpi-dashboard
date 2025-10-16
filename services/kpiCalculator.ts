@@ -19,7 +19,12 @@ const FRT_BUCKETS = {
 
 // Debug logger
 const debug = (message: string, data?: any) => {
-  if (process.env.NODE_ENV === 'development') {
+  const nodeEnv =
+    typeof globalThis !== 'undefined'
+      ? (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.NODE_ENV
+      : undefined;
+
+  if (nodeEnv === 'development') {
     console.debug(`[KPI Debug] ${message}`, data || '');
   }
 };
@@ -84,7 +89,7 @@ function getFirstReplyMinutes(ticket: ZendeskTicket): number | null {
     return metricValue;
   }
 
-  return getMinutesBetween(ticket.created_at, ticket.updated_at);
+  return null;
 }
 
 function getResolutionMinutes(ticket: ZendeskTicket): number | null {
@@ -138,7 +143,7 @@ export function calculateKPIsForWeek(
 
   const frtValuesMinutes = frtWindowMeasurements
     .map(measurement => measurement.minutes)
-    .filter((value): value is number => value !== null && value >= 0 && value <= 72 * 60);
+    .filter((value): value is number => value !== null && value > 0 && value <= 72 * 60);
 
   const frtDistribution = buildFRTDistribution(
     weekTickets,
@@ -201,7 +206,7 @@ function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMea
   const repliedIds = new Set<number>();
 
   measurements.forEach(({ ticket, minutes }) => {
-    if (minutes === null || minutes <= 0) {
+    if (minutes === null || minutes < 0) {
       return;
     }
 
@@ -236,23 +241,46 @@ function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBre
   const breakdown: FCRBreakdown = { oneTouch: 0, twoTouch: 0, reopened: 0 };
   
   for (const ticket of tickets) {
-    const solvedAt = ticket.metric_set?.solved_at;
-    if (!solvedAt) continue;
+    const solvedAt = ticket.metric_set?.solved_at ?? ticket.solved_at ?? null;
+    if (!solvedAt) {
+      continue;
+    }
 
-    // FCR 조건: 재오픈(reopens)이 0인 경우 FCR 성공
-    const isFCR = (ticket.metric_set?.reopens ?? 0) === 0;
-    const resolutionTime = getHoursBetween(ticket.created_at, solvedAt);
-    
-    if (resolutionTime === null) continue;
+    const reopens = ticket.metric_set?.reopens ?? ticket.reopens ?? 0;
 
-    if (!isFCR) {
+    if (reopens > 0) {
       breakdown.reopened++;
-    } else if (resolutionTime <= FCR_ONE_TOUCH_HOURS) {
+      continue;
+    }
+
+    const replies = ticket.metric_set?.replies ?? ticket.replies;
+    if (typeof replies === 'number') {
+      if (replies <= 1) {
+        breakdown.oneTouch++;
+      } else {
+        breakdown.twoTouch++;
+      }
+      continue;
+    }
+
+    const touches = ticket.metric_set?.touches;
+    if (typeof touches === 'number') {
+      if (touches <= 1) {
+        breakdown.oneTouch++;
+      } else {
+        breakdown.twoTouch++;
+      }
+      continue;
+    }
+
+    const resolutionTime = getHoursBetween(ticket.created_at, solvedAt);
+    if (resolutionTime === null) {
+      continue;
+    }
+
+    if (resolutionTime <= FCR_ONE_TOUCH_HOURS) {
       breakdown.oneTouch++;
-    } else if (resolutionTime <= FCR_TWO_TOUCH_HOURS) {
-      breakdown.twoTouch++;
     } else {
-      // 72시간 초과지만 재오픈은 없는 경우
       breakdown.twoTouch++;
     }
   }
@@ -260,7 +288,6 @@ function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBre
   const totalFCR = breakdown.oneTouch + breakdown.twoTouch;
   const totalTickets = totalFCR + breakdown.reopened;
   
-  // FCR% = (1차 + 2차 해결) / (1차 + 2차 + 재오픈) * 100
   const fcrPercent = totalTickets > 0 
     ? (totalFCR / totalTickets) * 100 
     : 0;
