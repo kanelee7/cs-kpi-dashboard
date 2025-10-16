@@ -146,6 +146,10 @@ export class ZendeskClient {
     let page = 1;
     let nextPageUrl: string | null = `${this.baseUrl}/incremental/tickets/cursor.json?start_time=${Math.floor(new Date(startDate).getTime() / 1000)}&include=organizations,metric_sets`;
     const collected: ZendeskTicket[] = [];
+    let totalMetricSetCount = 0;
+    let totalFirstReplyCalendarCount = 0;
+    let totalFirstReplyBusinessCount = 0;
+    let totalProcessedFirstReplyCount = 0;
 
     console.log(`[ZendeskClient] Fetching tickets created after ${startDate}`);
 
@@ -156,6 +160,9 @@ export class ZendeskClient {
         const data: ZendeskTicketListResponse = await this.fetchJson<ZendeskTicketListResponse>(nextPageUrl);
         const tickets: ZendeskTicket[] = data.tickets ?? [];
         const metricSets = data.metric_sets ?? [];
+        const pageFirstReplyCalendarCount = metricSets.filter(metric => typeof metric.first_reply_time_in_minutes?.calendar === 'number').length;
+        const pageFirstReplyBusinessCount = metricSets.filter(metric => typeof metric.first_reply_time_in_minutes?.business === 'number').length;
+        console.log(`[ZendeskClient] Page ${page} metric_sets: total=${metricSets.length}, first_reply.calendar=${pageFirstReplyCalendarCount}, first_reply.business=${pageFirstReplyBusinessCount}`);
 
         const metricMap = new Map<number, ZendeskMetricSet>();
         for (const metric of metricSets) {
@@ -184,8 +191,23 @@ export class ZendeskClient {
           };
         });
 
+        const processedFirstReplyCount = processedTickets.filter(ticket => typeof ticket.first_reply_time_minutes === 'number').length;
+        totalMetricSetCount += metricSets.length;
+        totalFirstReplyCalendarCount += pageFirstReplyCalendarCount;
+        totalFirstReplyBusinessCount += pageFirstReplyBusinessCount;
+        totalProcessedFirstReplyCount += processedFirstReplyCount;
+
+        if (page === 1 && processedTickets.length > 0) {
+          const sampleMetrics = processedTickets.slice(0, 5).map(ticket => ({
+            id: ticket.id,
+            firstReplyMinutes: ticket.first_reply_time_minutes,
+            metricSetPresent: !!ticket.metric_set,
+          }));
+          console.log('[ZendeskClient] Sample metric_set payload (first 5 tickets):', sampleMetrics);
+        }
+
         collected.push(...processedTickets);
-        console.log(`[ZendeskClient] Retrieved ${tickets.length} tickets on page ${page} (total=${collected.length})`);
+        console.log(`[ZendeskClient] Retrieved ${tickets.length} tickets on page ${page} (total=${collected.length}, first_reply_with_value=${processedFirstReplyCount})`);
 
         nextPageUrl = data.next_page ?? null;
         page += 1;
@@ -203,6 +225,17 @@ export class ZendeskClient {
       console.warn(
         `[ZendeskClient] Pagination stopped at page ${page - 1}. Increase maxPages if additional data is required.`,
       );
+    }
+
+    console.log('[ZendeskClient] Metric availability summary', {
+      totalTickets: collected.length,
+      totalMetricSets: totalMetricSetCount,
+      firstReplyCalendarCount: totalFirstReplyCalendarCount,
+      firstReplyBusinessCount: totalFirstReplyBusinessCount,
+      processedFirstReplyCount: totalProcessedFirstReplyCount,
+    });
+    if (totalFirstReplyCalendarCount === 0) {
+      console.warn('[ZendeskClient] Warning: No metric_set.first_reply_time_in_minutes.calendar values were returned. Check Zendesk account settings.');
     }
 
     if (collected.length > 0) {

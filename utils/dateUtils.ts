@@ -3,15 +3,50 @@ export interface WeekRange {
   end: Date;
 }
 
+export const ZENDESK_TZ_OFFSET_HOURS = -12;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function toTimezone(date: Date, offsetHours: number): Date {
+  return new Date(date.getTime() + offsetHours * 60 * 60 * 1000);
+}
+
+export function toZendeskTimezone(date: Date): Date {
+  return toTimezone(date, ZENDESK_TZ_OFFSET_HOURS);
+}
+
+export function fromZendeskTimezone(date: Date): Date {
+  return toTimezone(date, -ZENDESK_TZ_OFFSET_HOURS);
+}
+
+function truncateToZendeskMidnight(localDate: Date): Date {
+  const truncated = new Date(localDate);
+  truncated.setUTCHours(0, 0, 0, 0);
+  return truncated;
+}
+
+function getWeekRangeForDate(referenceDate: Date, offsetWeeks = 0): WeekRange {
+  const localReference = toZendeskTimezone(referenceDate);
+  const startLocal = truncateToZendeskMidnight(localReference);
+  const isoDay = (startLocal.getUTCDay() + 6) % 7;
+  startLocal.setUTCDate(startLocal.getUTCDate() - isoDay - offsetWeeks * 7);
+
+  const endLocal = new Date(startLocal.getTime() + 7 * MS_PER_DAY - 1);
+
+  return {
+    start: fromZendeskTimezone(startLocal),
+    end: fromZendeskTimezone(endLocal),
+  };
+}
+
 /**
- * Calculate Zendesk-style week number (ISO 8601, weeks start on Monday in KST).
+ * Calculate Zendesk-style week number.
  */
 export function getZendeskWeekNumber(date: Date): number {
-  const kstDate = toKst(date);
+  const localDate = toZendeskTimezone(date);
   const target = new Date(Date.UTC(
-    kstDate.getUTCFullYear(),
-    kstDate.getUTCMonth(),
-    kstDate.getUTCDate()
+    localDate.getUTCFullYear(),
+    localDate.getUTCMonth(),
+    localDate.getUTCDate()
   ));
 
   const dayNumber = (target.getUTCDay() + 6) % 7;
@@ -22,25 +57,11 @@ export function getZendeskWeekNumber(date: Date): number {
   firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNumber + 3);
 
   const diff = target.getTime() - firstThursday.getTime();
-  return 1 + Math.round(diff / (7 * 24 * 60 * 60 * 1000));
+  return 1 + Math.round(diff / (7 * MS_PER_DAY));
 }
 
-/**
- * Returns the Monday-Sunday week range (KST) for the given offset.
- * @param offsetWeeks 0 = current week, 1 = previous week, etc.
- */
 export function getWeekRange(offsetWeeks = 0): WeekRange {
-  const now = toKst(new Date());
-  const day = (now.getUTCDay() + 6) % 7;
-  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 15, 0, 0));
-  monday.setUTCDate(monday.getUTCDate() - day - offsetWeeks * 7);
-
-  const start = new Date(monday);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 6);
-  end.setUTCHours(14, 59, 59, 999);
-
-  return { start, end };
+  return getWeekRangeForDate(new Date(), offsetWeeks);
 }
 
 /**
@@ -50,23 +71,18 @@ export function getWeekRange(offsetWeeks = 0): WeekRange {
  * @returns Object containing start and end dates
  */
 export function getDateRange(referenceDate: Date, periodType: 'week' | 'day' = 'week'): WeekRange {
-  const end = toKst(referenceDate);
-  const start = new Date(end);
-  
   if (periodType === 'week') {
-    // For week, get the start of the week (Sunday)
-    const day = end.getUTCDay();
-    start.setUTCDate(end.getUTCDate() - day);
-  } else {
-    // For day, just use the same day
-    start.setUTCDate(end.getUTCDate());
+    return getWeekRangeForDate(referenceDate, 0);
   }
-  
-  // Set to start of day in KST
-  start.setUTCHours(0, 0, 0, 0);
-  end.setUTCHours(23, 59, 59, 999);
-  
-  return { start, end };
+
+  const localEnd = toZendeskTimezone(referenceDate);
+  const startLocal = truncateToZendeskMidnight(localEnd);
+  const endLocal = new Date(startLocal.getTime() + MS_PER_DAY - 1);
+
+  return {
+    start: fromZendeskTimezone(startLocal),
+    end: fromZendeskTimezone(endLocal),
+  };
 }
 
 /**
@@ -75,15 +91,11 @@ export function getDateRange(referenceDate: Date, periodType: 'week' | 'day' = '
  * @deprecated Use getDateRange with periodType instead
  */
 export function getDateRangeDays(days: number, referenceDate: Date = new Date()): WeekRange {
-  const end = toKst(referenceDate);
-  end.setUTCHours(0, 0, 0, 0);
+  const localEnd = truncateToZendeskMidnight(toZendeskTimezone(referenceDate));
+  const startLocal = new Date(localEnd.getTime() - (days - 1) * MS_PER_DAY);
 
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - (days - 1));
-
-  return { start, end };
-}
-
-function toKst(date: Date): Date {
-  return new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return {
+    start: fromZendeskTimezone(startLocal),
+    end: fromZendeskTimezone(localEnd),
+  };
 }
