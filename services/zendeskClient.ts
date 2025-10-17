@@ -24,6 +24,7 @@ export interface ZendeskMetricSet {
   first_reply_time_in_minutes?: ZendeskMetricTime | null;
   first_reply_time_in_seconds?: ZendeskMetricTime | null;
   reply_time_in_minutes?: ZendeskMetricTime | null;
+  reply_time_in_seconds?: ZendeskMetricTime | null;
   agent_wait_time_in_minutes?: ZendeskMetricTime | null;
   requester_wait_time_in_minutes?: ZendeskMetricTime | null;
   on_hold_time_in_minutes?: ZendeskMetricTime | null;
@@ -56,6 +57,133 @@ export interface ZendeskTicket {
   requester_wait_time_minutes?: number | null;
   replies?: number | null;
   reopens?: number | null;
+  first_reply_metric_source?: string | null;
+  first_reply_metric_components?: FirstReplyMetricResolution['components'] | null;
+}
+
+type MetricTimePayload = ZendeskMetricTime | { calendar?: number | null; business?: number | null; seconds?: number | null } | number | null | undefined;
+
+interface MetricComponents {
+  calendar: number | null;
+  business: number | null;
+  seconds: number | null;
+  combined: number | null;
+  type: 'minutes' | 'seconds';
+}
+
+export interface FirstReplyMetricResolution {
+  minutes: number | null;
+  seconds: number | null;
+  source: string;
+  components: {
+    firstReplyMinutes: MetricComponents;
+    firstReplySeconds: MetricComponents;
+    replyMinutes: MetricComponents;
+    replySeconds: MetricComponents;
+  };
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value !== 'number') {
+    return null;
+  }
+
+  return Number.isFinite(value) ? value : null;
+}
+
+function extractMetricTimeComponents(value: MetricTimePayload, type: 'minutes' | 'seconds'): MetricComponents {
+  if (value === null || value === undefined) {
+    return {
+      calendar: null,
+      business: null,
+      seconds: null,
+      combined: null,
+      type,
+    };
+  }
+
+  if (typeof value === 'number') {
+    const numeric = toNumber(value);
+    return {
+      calendar: numeric,
+      business: null,
+      seconds: numeric,
+      combined: numeric,
+      type,
+    };
+  }
+
+  const calendar = toNumber((value as any).calendar);
+  const business = toNumber((value as any).business);
+  const seconds = toNumber((value as any).seconds);
+
+  return {
+    calendar,
+    business,
+    seconds,
+    combined: calendar ?? business ?? seconds ?? null,
+    type,
+  };
+}
+
+export function resolveFirstReplyMetrics(metricSet: ZendeskMetricSet | null | undefined): FirstReplyMetricResolution {
+  const firstReplyMinutes = extractMetricTimeComponents(metricSet?.first_reply_time_in_minutes, 'minutes');
+  const firstReplySeconds = extractMetricTimeComponents(metricSet?.first_reply_time_in_seconds, 'seconds');
+  const replyMinutes = extractMetricTimeComponents(metricSet?.reply_time_in_minutes, 'minutes');
+  const replySeconds = extractMetricTimeComponents(metricSet?.reply_time_in_seconds, 'seconds');
+
+  let minutes: number | null = null;
+  let seconds: number | null = null;
+  let source = 'none';
+
+  const selectMinutes = (value: number | null, label: string) => {
+    if (minutes === null && value !== null && value > 0) {
+      minutes = value;
+      source = label;
+    }
+  };
+
+  const selectSeconds = (value: number | null) => {
+    if (seconds === null && value !== null && value > 0) {
+      seconds = value;
+    }
+  };
+
+  selectMinutes(firstReplyMinutes.calendar, 'first_reply_minutes_calendar');
+  selectMinutes(firstReplyMinutes.business, 'first_reply_minutes_business');
+  selectMinutes(firstReplyMinutes.combined, 'first_reply_minutes_combined');
+
+  if (minutes === null) {
+    if (firstReplySeconds.calendar !== null && firstReplySeconds.calendar > 0) {
+      seconds = firstReplySeconds.calendar;
+      minutes = seconds / 60;
+      source = 'first_reply_seconds_calendar';
+    } else if (firstReplySeconds.business !== null && firstReplySeconds.business > 0) {
+      seconds = firstReplySeconds.business;
+      minutes = seconds / 60;
+      source = 'first_reply_seconds_business';
+    } else if (firstReplySeconds.combined !== null && firstReplySeconds.combined > 0) {
+      seconds = firstReplySeconds.combined;
+      minutes = seconds / 60;
+      source = 'first_reply_seconds_combined';
+    }
+  } else {
+    selectSeconds(firstReplySeconds.calendar);
+    selectSeconds(firstReplySeconds.business);
+    selectSeconds(firstReplySeconds.combined);
+  }
+
+  return {
+    minutes,
+    seconds,
+    source,
+    components: {
+      firstReplyMinutes,
+      firstReplySeconds,
+      replyMinutes,
+      replySeconds,
+    },
+  };
 }
 
 interface ZendeskTicketListResponse {
@@ -153,6 +281,7 @@ export class ZendeskClient {
     let totalFirstReplyBusinessCount = 0;
     let totalProcessedFirstReplyCount = 0;
     let totalFirstReplySecondsCount = 0;
+    const totalResolutionSourceCounts: Record<string, number> = {};
 
     console.log(`[ZendeskClient] Fetching tickets created after ${startDate}`);
 
@@ -176,41 +305,34 @@ export class ZendeskClient {
           metricMap.set(metric.ticket_id, metric);
         }
 
+        const pageResolutionSourceCounts: Record<string, number> = {};
+
         const processedTickets = tickets.map(ticket => {
           const metrics = metricMap.get(ticket.id) ?? null;
-
-          const firstReplyMinutesCalendar = metrics?.first_reply_time_in_minutes?.calendar ?? null;
-          const firstReplyMinutesBusiness = metrics?.first_reply_time_in_minutes?.business ?? null;
-          const firstReplySecondsCalendar = metrics?.first_reply_time_in_seconds?.calendar ?? null;
-          const firstReplySecondsBusiness = metrics?.first_reply_time_in_seconds?.business ?? null;
-
-          const firstReplySeconds = typeof firstReplySecondsCalendar === 'number'
-            ? firstReplySecondsCalendar
-            : typeof firstReplySecondsBusiness === 'number'
-              ? firstReplySecondsBusiness
-              : null;
-
-          let firstReplyMinutes = firstReplyMinutesCalendar ?? firstReplyMinutesBusiness ?? null;
-          if (firstReplyMinutes === null && typeof firstReplySeconds === 'number') {
-            firstReplyMinutes = firstReplySeconds / 60;
-          }
+          const firstReplyResolution = resolveFirstReplyMetrics(metrics);
 
           const fullResolutionMinutes = metrics?.full_resolution_time_in_minutes?.calendar ?? null;
           const agentWaitMinutes = metrics?.agent_wait_time_in_minutes?.calendar ?? null;
           const requesterWaitMinutes = metrics?.requester_wait_time_in_minutes?.calendar ?? null;
           const solvedAt = metrics?.solved_at || ticket.solved_at;
 
+          const resolutionSourceKey = firstReplyResolution.source || 'none';
+          pageResolutionSourceCounts[resolutionSourceKey] = (pageResolutionSourceCounts[resolutionSourceKey] ?? 0) + 1;
+          totalResolutionSourceCounts[resolutionSourceKey] = (totalResolutionSourceCounts[resolutionSourceKey] ?? 0) + 1;
+
           return {
             ...ticket,
             solved_at: solvedAt,
             metric_set: metrics,
-            first_reply_time_minutes: firstReplyMinutes,
-            first_reply_time_seconds: firstReplySeconds,
+            first_reply_time_minutes: firstReplyResolution.minutes,
+            first_reply_time_seconds: firstReplyResolution.seconds,
             full_resolution_time_minutes: fullResolutionMinutes,
             agent_wait_time_minutes: agentWaitMinutes,
             requester_wait_time_minutes: requesterWaitMinutes,
             replies: metrics?.replies ?? null,
             reopens: metrics?.reopens ?? null,
+            first_reply_metric_source: firstReplyResolution.source,
+            first_reply_metric_components: firstReplyResolution.components,
           };
         });
 
@@ -226,10 +348,22 @@ export class ZendeskClient {
             id: ticket.id,
             firstReplyMinutes: ticket.first_reply_time_minutes,
             firstReplySeconds: ticket.first_reply_time_seconds,
+            resolutionSource: ticket.first_reply_metric_source,
+            components: ticket.first_reply_metric_components,
             metricSetPresent: !!ticket.metric_set,
+            metricSetExcerpt: ticket.metric_set
+              ? {
+                  first_reply_time_in_minutes: ticket.metric_set.first_reply_time_in_minutes ?? null,
+                  first_reply_time_in_seconds: ticket.metric_set.first_reply_time_in_seconds ?? null,
+                  reply_time_in_minutes: ticket.metric_set.reply_time_in_minutes ?? null,
+                  reply_time_in_seconds: ticket.metric_set.reply_time_in_seconds ?? null,
+                }
+              : null,
           }));
           console.log('[ZendeskClient] Sample metric_set payload (first 5 tickets):', sampleMetrics);
         }
+
+        console.log('[ZendeskClient] Page first reply resolution sources:', pageResolutionSourceCounts);
 
         collected.push(...processedTickets);
         console.log(`[ZendeskClient] Retrieved ${tickets.length} tickets on page ${page} (total=${collected.length}, first_reply_with_value=${processedFirstReplyCount})`);
@@ -259,6 +393,7 @@ export class ZendeskClient {
       firstReplyBusinessCount: totalFirstReplyBusinessCount,
       firstReplySecondsCount: totalFirstReplySecondsCount,
       processedFirstReplyCount: totalProcessedFirstReplyCount,
+      firstReplyResolutionSources: totalResolutionSourceCounts,
     });
     if (totalFirstReplyCalendarCount === 0) {
       console.warn('[ZendeskClient] Warning: No metric_set.first_reply_time_in_minutes.calendar values were returned. Check Zendesk account settings.');

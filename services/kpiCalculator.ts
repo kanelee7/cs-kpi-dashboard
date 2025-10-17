@@ -1,4 +1,5 @@
-import type { ZendeskTicket } from './zendeskClient';
+import { resolveFirstReplyMetrics } from './zendeskClient';
+import type { FirstReplyMetricResolution, ZendeskTicket } from './zendeskClient';
 import { getDateRange, toZendeskTimezone } from '../utils/dateUtils';
 
 // Constants (Zendesk Analytics와 동일한 값 사용)
@@ -15,7 +16,9 @@ const FRT_BUCKETS = {
   OVER_24H: Infinity    // 24시간 초과
 };
 
-type FirstReplyMetricSource = 'ticket' | 'metric_set_calendar' | 'metric_set_business' | 'none';
+type FirstReplyMetricSource = 'ticket' | 'metric_set_calendar' | 'metric_set_business' | 'metric_set_seconds' | 'none';
+
+type FirstReplyMetricComponentsDetail = FirstReplyMetricResolution['components'];
 
 interface FirstReplyMetricInfo {
   minutes: number | null;
@@ -24,6 +27,8 @@ interface FirstReplyMetricInfo {
   calendarMinutes: number | null;
   businessMinutes: number | null;
   secondsValue: number | null;
+  resolutionSource: string;
+  resolutionComponents: FirstReplyMetricComponentsDetail | null;
 }
 
 // Debug logger
@@ -96,26 +101,47 @@ function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
   const metricSeconds = ticket.metric_set?.first_reply_time_in_seconds ?? null;
   const calendarSeconds = typeof metricSeconds?.calendar === 'number' ? metricSeconds.calendar : null;
   const businessSeconds = typeof metricSeconds?.business === 'number' ? metricSeconds.business : null;
-  const secondsValue = calendarSeconds ?? businessSeconds ?? (typeof ticket.first_reply_time_seconds === 'number' ? ticket.first_reply_time_seconds : null);
+  let resolutionSource = ticket.first_reply_metric_source ?? (directMinutes !== null ? 'ticket' : 'none');
+  let resolutionComponents: FirstReplyMetricComponentsDetail | null = ticket.first_reply_metric_components ?? null;
+
+  if (!resolutionComponents && ticket.metric_set) {
+    const resolution = resolveFirstReplyMetrics(ticket.metric_set);
+    resolutionSource = resolution.source;
+    resolutionComponents = resolution.components;
+  }
+
+  const secondsValue = typeof ticket.first_reply_time_seconds === 'number'
+    ? ticket.first_reply_time_seconds
+    : resolutionComponents?.firstReplySeconds?.combined
+      ?? calendarSeconds
+      ?? businessSeconds
+      ?? null;
 
   let rawMinutes: number | null = null;
   let source: FirstReplyMetricSource = 'none';
 
-  if (directMinutes !== null) {
+  if (directMinutes !== null && directMinutes > 0) {
     rawMinutes = directMinutes;
     source = 'ticket';
-  } else if (calendarMinutes !== null) {
+  } else if (calendarMinutes !== null && calendarMinutes > 0) {
     rawMinutes = calendarMinutes;
     source = 'metric_set_calendar';
-  } else if (businessMinutes !== null) {
+  } else if (businessMinutes !== null && businessMinutes > 0) {
     rawMinutes = businessMinutes;
     source = 'metric_set_business';
-  } else if (typeof secondsValue === 'number') {
-    rawMinutes = secondsValue / 60;
+  } else if (resolutionComponents?.firstReplyMinutes?.combined && resolutionComponents.firstReplyMinutes.combined > 0) {
+    rawMinutes = resolutionComponents.firstReplyMinutes.combined;
     source = 'metric_set_business';
+  } else if (typeof secondsValue === 'number' && secondsValue > 0) {
+    rawMinutes = secondsValue / 60;
+    source = 'metric_set_seconds';
   }
 
   const minutes = rawMinutes !== null && rawMinutes > 0 ? rawMinutes : null;
+
+  if (!resolutionSource || resolutionSource === 'none') {
+    resolutionSource = source;
+  }
 
   return {
     minutes,
@@ -124,6 +150,8 @@ function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
     calendarMinutes,
     businessMinutes,
     secondsValue,
+    resolutionSource,
+    resolutionComponents,
   };
 }
 
@@ -199,6 +227,8 @@ export function calculateKPIsForWeek(
       calendarMinutes: metricInfo.calendarMinutes,
       businessMinutes: metricInfo.businessMinutes,
       secondsValue: metricInfo.secondsValue,
+      resolutionSource: metricInfo.resolutionSource,
+      resolutionComponents: metricInfo.resolutionComponents,
     };
   });
 
@@ -206,6 +236,8 @@ export function calculateKPIsForWeek(
     (stats, measurement) => {
       stats.total += 1;
       stats.sourceCounts[measurement.source] = (stats.sourceCounts[measurement.source] ?? 0) + 1;
+      const resolutionKey = measurement.resolutionSource || 'none';
+      stats.resolutionSourceCounts[resolutionKey] = (stats.resolutionSourceCounts[resolutionKey] ?? 0) + 1;
       if (typeof measurement.secondsValue === 'number') {
         stats.secondsCount += 1;
       }
@@ -232,6 +264,7 @@ export function calculateKPIsForWeek(
           calendar: measurement.calendarMinutes,
           business: measurement.businessMinutes,
           seconds: measurement.secondsValue,
+          resolutionSource: measurement.resolutionSource,
         });
       }
 
@@ -246,9 +279,11 @@ export function calculateKPIsForWeek(
         ticket: 0,
         metric_set_calendar: 0,
         metric_set_business: 0,
+        metric_set_seconds: 0,
         none: 0,
       } as Record<FirstReplyMetricSource, number>,
       secondsCount: 0,
+      resolutionSourceCounts: {} as Record<string, number>,
       nullSamples: [] as number[],
       zeroSamples: [] as { id: number; rawMinutes: number | null }[],
       metricSamples: [] as Array<{
@@ -258,6 +293,7 @@ export function calculateKPIsForWeek(
         calendar: number | null;
         business: number | null;
         seconds: number | null;
+        resolutionSource: string;
       }>,
     },
   );
@@ -268,6 +304,7 @@ export function calculateKPIsForWeek(
     zeroOrNegativeCount: frtMetricStats.zeroCount,
     validCount: frtMetricStats.validCount,
     sourceCounts: frtMetricStats.sourceCounts,
+    resolutionSourceCounts: frtMetricStats.resolutionSourceCounts,
     nullSamples: frtMetricStats.nullSamples,
     zeroSamples: frtMetricStats.zeroSamples,
     metricSamples: frtMetricStats.metricSamples,
@@ -299,12 +336,14 @@ export function calculateKPIsForWeek(
     frtValidSample: frtValidTickets.slice(0, 10).map(m => ({
       id: m.ticket.id,
       minutes: m.minutes,
+      resolutionSource: m.resolutionSource,
     })),
     nullCount: frtMetricStats.nullCount,
     zeroOrNegativeCount: frtMetricStats.zeroCount,
     nullSamples: frtMetricStats.nullSamples,
     zeroSamples: frtMetricStats.zeroSamples,
     secondsCount: frtMetricStats.secondsCount,
+    resolutionSourceCounts: frtMetricStats.resolutionSourceCounts,
   });
 
   if (frtMetricStats.nullSamples.length > 0) {
@@ -314,6 +353,8 @@ export function calculateKPIsForWeek(
       .map(sample => ({
         id: sample!.ticket.id,
         metric_set: sample!.ticket.metric_set,
+        resolutionSource: sample!.resolutionSource,
+        first_reply_metric_components: sample!.ticket.first_reply_metric_components ?? sample!.resolutionComponents,
       })));
   }
 
@@ -329,6 +370,8 @@ export function calculateKPIsForWeek(
         calendarMinutes: metricInfo.calendarMinutes,
         businessMinutes: metricInfo.businessMinutes,
         secondsValue: metricInfo.secondsValue,
+        resolutionSource: metricInfo.resolutionSource,
+        resolutionComponents: metricInfo.resolutionComponents,
       };
     })
   );
@@ -401,6 +444,8 @@ type FRTMeasurement = {
   calendarMinutes: number | null;
   businessMinutes: number | null;
   secondsValue: number | null;
+  resolutionSource: string;
+  resolutionComponents: FirstReplyMetricComponentsDetail | null;
 };
 
 function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMeasurement[]): FRTDistribution {
