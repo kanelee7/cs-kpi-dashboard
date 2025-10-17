@@ -15,6 +15,16 @@ const FRT_BUCKETS = {
   OVER_24H: Infinity    // 24시간 초과
 };
 
+type FirstReplyMetricSource = 'ticket' | 'metric_set_calendar' | 'metric_set_business' | 'none';
+
+interface FirstReplyMetricInfo {
+  minutes: number | null;
+  rawMinutes: number | null;
+  source: FirstReplyMetricSource;
+  calendarMinutes: number | null;
+  businessMinutes: number | null;
+}
+
 // Debug logger
 const debug = (message: string, data?: any) => {
   const nodeEnv =
@@ -77,17 +87,39 @@ function cloneDistribution(): FRTDistribution {
   return { ...EMPTY_DISTRIBUTION };
 }
 
+function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
+  const directMinutes = typeof ticket.first_reply_time_minutes === 'number' ? ticket.first_reply_time_minutes : null;
+  const metricTime = ticket.metric_set?.first_reply_time_in_minutes ?? null;
+  const calendarMinutes = typeof metricTime?.calendar === 'number' ? metricTime.calendar : null;
+  const businessMinutes = typeof metricTime?.business === 'number' ? metricTime.business : null;
+
+  let rawMinutes: number | null = null;
+  let source: FirstReplyMetricSource = 'none';
+
+  if (directMinutes !== null) {
+    rawMinutes = directMinutes;
+    source = 'ticket';
+  } else if (calendarMinutes !== null) {
+    rawMinutes = calendarMinutes;
+    source = 'metric_set_calendar';
+  } else if (businessMinutes !== null) {
+    rawMinutes = businessMinutes;
+    source = 'metric_set_business';
+  }
+
+  const minutes = rawMinutes !== null && rawMinutes > 0 ? rawMinutes : null;
+
+  return {
+    minutes,
+    rawMinutes,
+    source,
+    calendarMinutes,
+    businessMinutes,
+  };
+}
+
 function getFirstReplyMinutes(ticket: ZendeskTicket): number | null {
-  if (typeof ticket.first_reply_time_minutes === 'number') {
-    return ticket.first_reply_time_minutes;
-  }
-
-  const metricValue = ticket.metric_set?.first_reply_time_in_minutes?.calendar ?? null;
-  if (typeof metricValue === 'number') {
-    return metricValue;
-  }
-
-  return null;
+  return collectFirstReplyMetric(ticket).minutes;
 }
 
 function getResolutionMinutes(ticket: ZendeskTicket): number | null {
@@ -148,10 +180,96 @@ export function calculateKPIsForWeek(
   // FRT Calculation (using Zendesk metrics with relaxed filters)
   const frtRangeStart = new Date(weekEnd.getTime() - FRT_WINDOW_DAYS * DAY_IN_MS);
   const frtWindowTickets = filterTicketsByCreatedAt(tickets, frtRangeStart, weekEnd);
-  const frtWindowMeasurements = frtWindowTickets.map(ticket => ({
-    ticket,
-    minutes: getFirstReplyMinutes(ticket)
-  }));
+  const frtWindowMeasurements = frtWindowTickets.map(ticket => {
+    const metricInfo = collectFirstReplyMetric(ticket);
+    return {
+      ticket,
+      minutes: metricInfo.minutes,
+      rawMinutes: metricInfo.rawMinutes,
+      source: metricInfo.source,
+      calendarMinutes: metricInfo.calendarMinutes,
+      businessMinutes: metricInfo.businessMinutes,
+    };
+  });
+
+  const frtMetricStats = frtWindowMeasurements.reduce(
+    (stats, measurement) => {
+      stats.total += 1;
+      stats.sourceCounts[measurement.source] = (stats.sourceCounts[measurement.source] ?? 0) + 1;
+
+      if (measurement.rawMinutes === null) {
+        stats.nullCount += 1;
+        if (stats.nullSamples.length < 5) {
+          stats.nullSamples.push(measurement.ticket.id);
+        }
+      } else if (measurement.rawMinutes <= 0) {
+        stats.zeroCount += 1;
+        if (stats.zeroSamples.length < 5) {
+          stats.zeroSamples.push({ id: measurement.ticket.id, rawMinutes: measurement.rawMinutes });
+        }
+      } else {
+        stats.validCount += 1;
+      }
+
+      if (stats.metricSamples.length < 5) {
+        stats.metricSamples.push({
+          id: measurement.ticket.id,
+          source: measurement.source,
+          rawMinutes: measurement.rawMinutes,
+          calendar: measurement.calendarMinutes,
+          business: measurement.businessMinutes,
+        });
+      }
+
+      return stats;
+    },
+    {
+      total: 0,
+      nullCount: 0,
+      zeroCount: 0,
+      validCount: 0,
+      sourceCounts: {
+        ticket: 0,
+        metric_set_calendar: 0,
+        metric_set_business: 0,
+        none: 0,
+      } as Record<FirstReplyMetricSource, number>,
+      nullSamples: [] as number[],
+      zeroSamples: [] as { id: number; rawMinutes: number | null }[],
+      metricSamples: [] as Array<{
+        id: number;
+        source: FirstReplyMetricSource;
+        rawMinutes: number | null;
+        calendar: number | null;
+        business: number | null;
+      }>,
+    },
+  );
+
+  debug('FRT metric distribution', {
+    total: frtMetricStats.total,
+    nullCount: frtMetricStats.nullCount,
+    zeroOrNegativeCount: frtMetricStats.zeroCount,
+    validCount: frtMetricStats.validCount,
+    sourceCounts: frtMetricStats.sourceCounts,
+    nullSamples: frtMetricStats.nullSamples,
+    zeroSamples: frtMetricStats.zeroSamples,
+    metricSamples: frtMetricStats.metricSamples,
+  });
+
+  if (frtMetricStats.total > 0) {
+    const invalidRatio = (frtMetricStats.nullCount + frtMetricStats.zeroCount) / frtMetricStats.total;
+    if (invalidRatio >= 0.5) {
+      console.warn(
+        `[KPI Warning] first_reply_time_in_minutes 값이 ${Math.round(invalidRatio * 1000) / 10}% 티켓에서 null/0 입니다. Zendesk API 응답 또는 티켓 유형을 확인하세요.`,
+        {
+          nullCount: frtMetricStats.nullCount,
+          zeroCount: frtMetricStats.zeroCount,
+          total: frtMetricStats.total,
+        },
+      );
+    }
+  }
 
   const frtValuesMinutes = frtWindowMeasurements
     .map(measurement => measurement.minutes)
@@ -165,11 +283,25 @@ export function calculateKPIsForWeek(
       id: m.ticket.id,
       minutes: m.minutes,
     })),
+    nullCount: frtMetricStats.nullCount,
+    zeroOrNegativeCount: frtMetricStats.zeroCount,
+    nullSamples: frtMetricStats.nullSamples,
+    zeroSamples: frtMetricStats.zeroSamples,
   });
 
   const frtDistribution = buildFRTDistribution(
     weekTickets,
-    weekTickets.map(ticket => ({ ticket, minutes: getFirstReplyMinutes(ticket) }))
+    weekTickets.map(ticket => {
+      const metricInfo = collectFirstReplyMetric(ticket);
+      return {
+        ticket,
+        minutes: metricInfo.minutes,
+        rawMinutes: metricInfo.rawMinutes,
+        source: metricInfo.source,
+        calendarMinutes: metricInfo.calendarMinutes,
+        businessMinutes: metricInfo.businessMinutes,
+      };
+    })
   );
 
   const frtMedian = frtValuesMinutes.length > 0
@@ -235,6 +367,10 @@ export function calculateKPIs(tickets: ZendeskTicket[], referenceDate: Date = ne
 type FRTMeasurement = {
   ticket: ZendeskTicket;
   minutes: number | null;
+  rawMinutes: number | null;
+  source: FirstReplyMetricSource;
+  calendarMinutes: number | null;
+  businessMinutes: number | null;
 };
 
 function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMeasurement[]): FRTDistribution {
