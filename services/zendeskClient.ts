@@ -143,34 +143,44 @@ export function resolveFirstReplyMetrics(metricSet: ZendeskMetricSet | null | un
     }
   };
 
-  const selectSeconds = (value: number | null) => {
-    if (seconds === null && value !== null && value > 0) {
-      seconds = value;
+  const applySeconds = (value: number | null, label: string) => {
+    if (value !== null && value > 0) {
+      if (minutes === null) {
+        minutes = value / 60;
+        source = label;
+      }
+      if (seconds === null) {
+        seconds = value;
+      }
     }
   };
 
-  selectMinutes(firstReplyMinutes.calendar, 'first_reply_minutes_calendar');
   selectMinutes(firstReplyMinutes.business, 'first_reply_minutes_business');
+  selectMinutes(firstReplyMinutes.calendar, 'first_reply_minutes_calendar');
   selectMinutes(firstReplyMinutes.combined, 'first_reply_minutes_combined');
 
   if (minutes === null) {
-    if (firstReplySeconds.calendar !== null && firstReplySeconds.calendar > 0) {
-      seconds = firstReplySeconds.calendar;
-      minutes = seconds / 60;
-      source = 'first_reply_seconds_calendar';
-    } else if (firstReplySeconds.business !== null && firstReplySeconds.business > 0) {
-      seconds = firstReplySeconds.business;
-      minutes = seconds / 60;
-      source = 'first_reply_seconds_business';
-    } else if (firstReplySeconds.combined !== null && firstReplySeconds.combined > 0) {
-      seconds = firstReplySeconds.combined;
-      minutes = seconds / 60;
-      source = 'first_reply_seconds_combined';
+    selectMinutes(replyMinutes.business, 'reply_minutes_business');
+    selectMinutes(replyMinutes.calendar, 'reply_minutes_calendar');
+    selectMinutes(replyMinutes.combined, 'reply_minutes_combined');
+  }
+
+  if (minutes === null) {
+    applySeconds(firstReplySeconds.business, 'first_reply_seconds_business');
+    applySeconds(firstReplySeconds.calendar, 'first_reply_seconds_calendar');
+    applySeconds(firstReplySeconds.combined, 'first_reply_seconds_combined');
+    if (minutes === null) {
+      applySeconds(replySeconds.business, 'reply_seconds_business');
+      applySeconds(replySeconds.calendar, 'reply_seconds_calendar');
+      applySeconds(replySeconds.combined, 'reply_seconds_combined');
     }
   } else {
-    selectSeconds(firstReplySeconds.calendar);
-    selectSeconds(firstReplySeconds.business);
-    selectSeconds(firstReplySeconds.combined);
+    applySeconds(firstReplySeconds.business, 'first_reply_seconds_business');
+    applySeconds(firstReplySeconds.calendar, 'first_reply_seconds_calendar');
+    applySeconds(firstReplySeconds.combined, 'first_reply_seconds_combined');
+    applySeconds(replySeconds.business, 'reply_seconds_business');
+    applySeconds(replySeconds.calendar, 'reply_seconds_calendar');
+    applySeconds(replySeconds.combined, 'reply_seconds_combined');
   }
 
   return {
@@ -311,12 +321,39 @@ export class ZendeskClient {
           const metrics = metricMap.get(ticket.id) ?? null;
           const firstReplyResolution = resolveFirstReplyMetrics(metrics);
 
+          const replyMinutesBusiness = metrics?.reply_time_in_minutes?.business ?? null;
+          const replyMinutesCalendar = metrics?.reply_time_in_minutes?.calendar ?? null;
+          const replySecondsBusiness = metrics?.reply_time_in_seconds?.business ?? null;
+          const replySecondsCalendar = metrics?.reply_time_in_seconds?.calendar ?? null;
+
+          let minutesValue = firstReplyResolution.minutes;
+          let secondsValue = firstReplyResolution.seconds;
+          let sourceLabel = firstReplyResolution.source;
+
+          if (minutesValue === null || minutesValue <= 0) {
+            if (typeof replyMinutesBusiness === 'number' && replyMinutesBusiness > 0) {
+              minutesValue = replyMinutesBusiness;
+              sourceLabel = 'reply_minutes_business';
+            } else if (typeof replyMinutesCalendar === 'number' && replyMinutesCalendar > 0) {
+              minutesValue = replyMinutesCalendar;
+              sourceLabel = 'reply_minutes_calendar';
+            }
+          }
+
+          if (secondsValue === null || secondsValue <= 0) {
+            if (typeof replySecondsBusiness === 'number' && replySecondsBusiness > 0) {
+              secondsValue = replySecondsBusiness;
+            } else if (typeof replySecondsCalendar === 'number' && replySecondsCalendar > 0) {
+              secondsValue = replySecondsCalendar;
+            }
+          }
+
           const fullResolutionMinutes = metrics?.full_resolution_time_in_minutes?.calendar ?? null;
           const agentWaitMinutes = metrics?.agent_wait_time_in_minutes?.calendar ?? null;
           const requesterWaitMinutes = metrics?.requester_wait_time_in_minutes?.calendar ?? null;
           const solvedAt = metrics?.solved_at || ticket.solved_at;
 
-          const resolutionSourceKey = firstReplyResolution.source || 'none';
+          const resolutionSourceKey = sourceLabel && sourceLabel !== '' ? sourceLabel : 'none';
           pageResolutionSourceCounts[resolutionSourceKey] = (pageResolutionSourceCounts[resolutionSourceKey] ?? 0) + 1;
           totalResolutionSourceCounts[resolutionSourceKey] = (totalResolutionSourceCounts[resolutionSourceKey] ?? 0) + 1;
 
@@ -324,14 +361,14 @@ export class ZendeskClient {
             ...ticket,
             solved_at: solvedAt,
             metric_set: metrics,
-            first_reply_time_minutes: firstReplyResolution.minutes,
-            first_reply_time_seconds: firstReplyResolution.seconds,
+            first_reply_time_minutes: minutesValue ?? null,
+            first_reply_time_seconds: secondsValue ?? null,
             full_resolution_time_minutes: fullResolutionMinutes,
             agent_wait_time_minutes: agentWaitMinutes,
             requester_wait_time_minutes: requesterWaitMinutes,
             replies: metrics?.replies ?? null,
             reopens: metrics?.reopens ?? null,
-            first_reply_metric_source: firstReplyResolution.source,
+            first_reply_metric_source: sourceLabel,
             first_reply_metric_components: firstReplyResolution.components,
           };
         });
@@ -361,6 +398,7 @@ export class ZendeskClient {
               : null,
           }));
           console.log('[ZendeskClient] Sample metric_set payload (first 5 tickets):', sampleMetrics);
+          console.log('[ZendeskClient] Raw metric_set sample JSON:', JSON.stringify(metricSets.slice(0, 3), null, 2));
         }
 
         console.log('[ZendeskClient] Page first reply resolution sources:', pageResolutionSourceCounts);

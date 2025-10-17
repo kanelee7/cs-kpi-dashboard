@@ -57,33 +57,31 @@ export default function WeeklyEmbedPage(): JSX.Element {
     const resolvedValues = weeklyTicketsResolved.slice(-totalPoints);
     const yAxisValues = computeYAxis(5, [...inValues, ...resolvedValues]);
 
-    return { labels, inValues, resolvedValues, yAxisValues };
+    const maxAxisValue = yAxisValues[yAxisValues.length - 1] || 1;
+
+    return { labels, inValues, resolvedValues, yAxisValues, maxAxisValue };
   }, [data]);
 
   return (
-    <div className="min-h-screen bg-[#282929] text-white flex items-center justify-center p-6">
-      <div
-        className="w-full max-w-5xl"
-        style={{ aspectRatio: "16 / 9", display: "flex", alignItems: "center", justifyContent: "center" }}
-      >
+    <div className="min-h-screen bg-[#1f2020] text-white">
+      <div className="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
         {isLoading && (
-          <div className="text-gray-300">Loading chart...</div>
+          <div className="text-gray-300 text-base">Loading chart...</div>
         )}
         {!isLoading && error && (
-          <div className="text-red-400">{error}</div>
+          <div className="text-red-400 text-base">{error}</div>
         )}
         {!isLoading && !error && chartData && chartData.labels.length > 0 && (
-          <div className="w-full h-full bg-[#232424] rounded-xl p-8 shadow-lg flex flex-col">
-            <div className="flex-1 flex items-end">
+          <div className="w-full overflow-hidden rounded-2xl bg-[#232424] shadow-xl">
+            <div className="w-full" style={{ aspectRatio: "16 / 9" }}>
               <svg width="100%" height="100%" viewBox="0 0 960 540">
                 <rect x="0" y="0" width="960" height="540" fill="transparent" />
-                {/* Axes */}
                 <line x1="80" y1="60" x2="80" y2="440" stroke="#374151" strokeWidth="2" />
                 <line x1="80" y1="440" x2="900" y2="440" stroke="#374151" strokeWidth="2" />
 
-                {/* Y-axis Labels and Grid */}
                 {chartData.yAxisValues.map((value, index) => {
-                  const y = 440 - (value / chartData.yAxisValues[chartData.yAxisValues.length - 1]) * 360;
+                  const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
+                  const y = 440 - (value / safeMax) * 360;
                   return (
                     <g key={`y-${index}`}>
                       <line x1="80" y1={y} x2="900" y2={y} stroke="#374151" strokeWidth="1" opacity="0.2" />
@@ -94,16 +92,15 @@ export default function WeeklyEmbedPage(): JSX.Element {
                   );
                 })}
 
-                {/* Bars */}
                 {chartData.inValues.map((inValue, index) => {
                   const resolvedValue = chartData.resolvedValues[index] ?? 0;
                   const label = chartData.labels[index] ?? "";
                   const barGroupWidth = 720 / Math.max(chartData.labels.length, 1);
                   const groupX = 120 + index * barGroupWidth;
-                  const barWidth = Math.min(60, barGroupWidth / 2.5);
-                  const maxAxisValue = chartData.yAxisValues[chartData.yAxisValues.length - 1] || 1;
-                  const inHeight = (inValue / maxAxisValue) * 360;
-                  const resolvedHeight = (resolvedValue / maxAxisValue) * 360;
+                  const barWidth = Math.min(56, barGroupWidth / 2.4);
+                  const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
+                  const inHeight = (inValue / safeMax) * 360;
+                  const resolvedHeight = (resolvedValue / safeMax) * 360;
 
                   return (
                     <g key={`bar-${index}`}>
@@ -132,10 +129,10 @@ export default function WeeklyEmbedPage(): JSX.Element {
               </svg>
             </div>
 
-            <div className="flex justify-center gap-6 mt-6">
+            <div className="flex flex-wrap items-center justify-center gap-6 px-8 py-6">
               {LEGEND_ITEMS.map(item => (
                 <div key={item.label} className="flex items-center text-sm text-gray-300">
-                  <span className="w-3 h-3 rounded mr-2" style={{ backgroundColor: item.color }} />
+                  <span className="mr-2 h-3 w-3 rounded" style={{ backgroundColor: item.color }} />
                   {item.label}
                 </div>
               ))}
@@ -143,7 +140,7 @@ export default function WeeklyEmbedPage(): JSX.Element {
           </div>
         )}
         {!isLoading && !error && chartData && chartData.labels.length === 0 && (
-          <div className="text-gray-400">No weekly ticket data available.</div>
+          <div className="text-gray-400 text-base">No weekly ticket data available.</div>
         )}
       </div>
     </div>

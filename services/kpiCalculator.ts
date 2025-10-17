@@ -16,7 +16,7 @@ const FRT_BUCKETS = {
   OVER_24H: Infinity    // 24시간 초과
 };
 
-type FirstReplyMetricSource = 'ticket' | 'metric_set_calendar' | 'metric_set_business' | 'metric_set_seconds' | 'none';
+type FirstReplyMetricSource = string;
 
 type FirstReplyMetricComponentsDetail = FirstReplyMetricResolution['components'];
 
@@ -95,12 +95,7 @@ function cloneDistribution(): FRTDistribution {
 
 function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
   const directMinutes = typeof ticket.first_reply_time_minutes === 'number' ? ticket.first_reply_time_minutes : null;
-  const metricTime = ticket.metric_set?.first_reply_time_in_minutes ?? null;
-  const calendarMinutes = typeof metricTime?.calendar === 'number' ? metricTime.calendar : null;
-  const businessMinutes = typeof metricTime?.business === 'number' ? metricTime.business : null;
-  const metricSeconds = ticket.metric_set?.first_reply_time_in_seconds ?? null;
-  const calendarSeconds = typeof metricSeconds?.calendar === 'number' ? metricSeconds.calendar : null;
-  const businessSeconds = typeof metricSeconds?.business === 'number' ? metricSeconds.business : null;
+  const directSeconds = typeof ticket.first_reply_time_seconds === 'number' ? ticket.first_reply_time_seconds : null;
   let resolutionSource = ticket.first_reply_metric_source ?? (directMinutes !== null ? 'ticket' : 'none');
   let resolutionComponents: FirstReplyMetricComponentsDetail | null = ticket.first_reply_metric_components ?? null;
 
@@ -110,45 +105,70 @@ function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
     resolutionComponents = resolution.components;
   }
 
-  const secondsValue = typeof ticket.first_reply_time_seconds === 'number'
-    ? ticket.first_reply_time_seconds
-    : resolutionComponents?.firstReplySeconds?.combined
-      ?? calendarSeconds
-      ?? businessSeconds
-      ?? null;
+  const replyMinutes = ticket.metric_set?.reply_time_in_minutes ?? null;
+  const replyMinutesBusiness = typeof replyMinutes?.business === 'number' ? replyMinutes.business : null;
+  const replyMinutesCalendar = typeof replyMinutes?.calendar === 'number' ? replyMinutes.calendar : null;
+  const replyMinutesFallback = resolutionComponents?.replyMinutes?.combined ?? null;
 
-  let rawMinutes: number | null = null;
-  let source: FirstReplyMetricSource = 'none';
+  const replySeconds = ticket.metric_set?.reply_time_in_seconds ?? null;
+  const replySecondsBusiness = typeof replySeconds?.business === 'number' ? replySeconds.business : null;
+  const replySecondsCalendar = typeof replySeconds?.calendar === 'number' ? replySeconds.calendar : null;
+  const replySecondsFallback = resolutionComponents?.replySeconds?.combined ?? null;
 
-  if (directMinutes !== null && directMinutes > 0) {
-    rawMinutes = directMinutes;
-    source = 'ticket';
-  } else if (calendarMinutes !== null && calendarMinutes > 0) {
-    rawMinutes = calendarMinutes;
-    source = 'metric_set_calendar';
-  } else if (businessMinutes !== null && businessMinutes > 0) {
-    rawMinutes = businessMinutes;
-    source = 'metric_set_business';
-  } else if (resolutionComponents?.firstReplyMinutes?.combined && resolutionComponents.firstReplyMinutes.combined > 0) {
-    rawMinutes = resolutionComponents.firstReplyMinutes.combined;
-    source = 'metric_set_business';
-  } else if (typeof secondsValue === 'number' && secondsValue > 0) {
+  const firstReplyMinutesFallback = resolutionComponents?.firstReplyMinutes?.combined ?? null;
+  const firstReplySecondsFallback = resolutionComponents?.firstReplySeconds?.combined ?? null;
+
+  let rawMinutes: number | null = directMinutes !== null && directMinutes > 0 ? directMinutes : null;
+  let source: FirstReplyMetricSource = rawMinutes !== null ? (resolutionSource || 'ticket') : 'none';
+
+  if (rawMinutes === null || rawMinutes <= 0) {
+    if (replyMinutesBusiness && replyMinutesBusiness > 0) {
+      rawMinutes = replyMinutesBusiness;
+      source = 'reply_minutes_business';
+    } else if (replyMinutesCalendar && replyMinutesCalendar > 0) {
+      rawMinutes = replyMinutesCalendar;
+      source = 'reply_minutes_calendar';
+    } else if (replyMinutesFallback && replyMinutesFallback > 0) {
+      rawMinutes = replyMinutesFallback;
+      source = 'reply_minutes_combined';
+    } else if (firstReplyMinutesFallback && firstReplyMinutesFallback > 0) {
+      rawMinutes = firstReplyMinutesFallback;
+      source = 'first_reply_minutes_combined';
+    }
+  }
+
+  let secondsValue: number | null = directSeconds !== null && directSeconds > 0 ? directSeconds : null;
+  if (secondsValue === null || secondsValue <= 0) {
+    if (replySecondsBusiness && replySecondsBusiness > 0) {
+      secondsValue = replySecondsBusiness;
+    } else if (replySecondsCalendar && replySecondsCalendar > 0) {
+      secondsValue = replySecondsCalendar;
+    } else if (replySecondsFallback && replySecondsFallback > 0) {
+      secondsValue = replySecondsFallback;
+    } else if (firstReplySecondsFallback && firstReplySecondsFallback > 0) {
+      secondsValue = firstReplySecondsFallback;
+    }
+  }
+
+  if ((rawMinutes === null || rawMinutes <= 0) && secondsValue && secondsValue > 0) {
     rawMinutes = secondsValue / 60;
-    source = 'metric_set_seconds';
+    if (source === 'none') {
+      source = 'reply_seconds_fallback';
+    }
   }
 
   const minutes = rawMinutes !== null && rawMinutes > 0 ? rawMinutes : null;
 
-  if (!resolutionSource || resolutionSource === 'none') {
+  if ((!resolutionSource || resolutionSource === 'none') && source !== 'none') {
     resolutionSource = source;
   }
 
   return {
     minutes,
-    rawMinutes,
+    rawMinutes: minutes,
     source,
-    calendarMinutes,
-    businessMinutes,
+    calendarMinutes: replyMinutesCalendar,
+    businessMinutes: replyMinutesBusiness,
     secondsValue,
     resolutionSource,
     resolutionComponents,
@@ -275,13 +295,7 @@ export function calculateKPIsForWeek(
       nullCount: 0,
       zeroCount: 0,
       validCount: 0,
-      sourceCounts: {
-        ticket: 0,
-        metric_set_calendar: 0,
-        metric_set_business: 0,
-        metric_set_seconds: 0,
-        none: 0,
-      } as Record<FirstReplyMetricSource, number>,
+      sourceCounts: {} as Record<string, number>,
       secondsCount: 0,
       resolutionSourceCounts: {} as Record<string, number>,
       nullSamples: [] as number[],
