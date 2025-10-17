@@ -22,6 +22,7 @@ export interface ZendeskMetricSet {
   first_resolution_time_in_minutes?: ZendeskMetricTime | null;
   full_resolution_time_in_minutes?: ZendeskMetricTime | null;
   first_reply_time_in_minutes?: ZendeskMetricTime | null;
+  first_reply_time_in_seconds?: ZendeskMetricTime | null;
   reply_time_in_minutes?: ZendeskMetricTime | null;
   agent_wait_time_in_minutes?: ZendeskMetricTime | null;
   requester_wait_time_in_minutes?: ZendeskMetricTime | null;
@@ -49,6 +50,7 @@ export interface ZendeskTicket {
   type: string | null;
   metric_set?: ZendeskMetricSet | null;
   first_reply_time_minutes?: number | null;
+  first_reply_time_seconds?: number | null;
   full_resolution_time_minutes?: number | null;
   agent_wait_time_minutes?: number | null;
   requester_wait_time_minutes?: number | null;
@@ -150,6 +152,7 @@ export class ZendeskClient {
     let totalFirstReplyCalendarCount = 0;
     let totalFirstReplyBusinessCount = 0;
     let totalProcessedFirstReplyCount = 0;
+    let totalFirstReplySecondsCount = 0;
 
     console.log(`[ZendeskClient] Fetching tickets created after ${startDate}`);
 
@@ -162,7 +165,11 @@ export class ZendeskClient {
         const metricSets = data.metric_sets ?? [];
         const pageFirstReplyCalendarCount = metricSets.filter(metric => typeof metric.first_reply_time_in_minutes?.calendar === 'number').length;
         const pageFirstReplyBusinessCount = metricSets.filter(metric => typeof metric.first_reply_time_in_minutes?.business === 'number').length;
-        console.log(`[ZendeskClient] Page ${page} metric_sets: total=${metricSets.length}, first_reply.calendar=${pageFirstReplyCalendarCount}, first_reply.business=${pageFirstReplyBusinessCount}`);
+        const pageFirstReplySecondsCount = metricSets.filter(metric => {
+          const seconds = metric.first_reply_time_in_seconds;
+          return typeof seconds?.calendar === 'number' || typeof seconds?.business === 'number';
+        }).length;
+        console.log(`[ZendeskClient] Page ${page} metric_sets: total=${metricSets.length}, first_reply.calendar=${pageFirstReplyCalendarCount}, first_reply.business=${pageFirstReplyBusinessCount}, first_reply.seconds=${pageFirstReplySecondsCount}`);
 
         const metricMap = new Map<number, ZendeskMetricSet>();
         for (const metric of metricSets) {
@@ -172,7 +179,22 @@ export class ZendeskClient {
         const processedTickets = tickets.map(ticket => {
           const metrics = metricMap.get(ticket.id) ?? null;
 
-          const firstReplyMinutes = metrics?.first_reply_time_in_minutes?.calendar ?? null;
+          const firstReplyMinutesCalendar = metrics?.first_reply_time_in_minutes?.calendar ?? null;
+          const firstReplyMinutesBusiness = metrics?.first_reply_time_in_minutes?.business ?? null;
+          const firstReplySecondsCalendar = metrics?.first_reply_time_in_seconds?.calendar ?? null;
+          const firstReplySecondsBusiness = metrics?.first_reply_time_in_seconds?.business ?? null;
+
+          const firstReplySeconds = typeof firstReplySecondsCalendar === 'number'
+            ? firstReplySecondsCalendar
+            : typeof firstReplySecondsBusiness === 'number'
+              ? firstReplySecondsBusiness
+              : null;
+
+          let firstReplyMinutes = firstReplyMinutesCalendar ?? firstReplyMinutesBusiness ?? null;
+          if (firstReplyMinutes === null && typeof firstReplySeconds === 'number') {
+            firstReplyMinutes = firstReplySeconds / 60;
+          }
+
           const fullResolutionMinutes = metrics?.full_resolution_time_in_minutes?.calendar ?? null;
           const agentWaitMinutes = metrics?.agent_wait_time_in_minutes?.calendar ?? null;
           const requesterWaitMinutes = metrics?.requester_wait_time_in_minutes?.calendar ?? null;
@@ -183,6 +205,7 @@ export class ZendeskClient {
             solved_at: solvedAt,
             metric_set: metrics,
             first_reply_time_minutes: firstReplyMinutes,
+            first_reply_time_seconds: firstReplySeconds,
             full_resolution_time_minutes: fullResolutionMinutes,
             agent_wait_time_minutes: agentWaitMinutes,
             requester_wait_time_minutes: requesterWaitMinutes,
@@ -195,12 +218,14 @@ export class ZendeskClient {
         totalMetricSetCount += metricSets.length;
         totalFirstReplyCalendarCount += pageFirstReplyCalendarCount;
         totalFirstReplyBusinessCount += pageFirstReplyBusinessCount;
+        totalFirstReplySecondsCount += pageFirstReplySecondsCount;
         totalProcessedFirstReplyCount += processedFirstReplyCount;
 
         if (page === 1 && processedTickets.length > 0) {
           const sampleMetrics = processedTickets.slice(0, 5).map(ticket => ({
             id: ticket.id,
             firstReplyMinutes: ticket.first_reply_time_minutes,
+            firstReplySeconds: ticket.first_reply_time_seconds,
             metricSetPresent: !!ticket.metric_set,
           }));
           console.log('[ZendeskClient] Sample metric_set payload (first 5 tickets):', sampleMetrics);
@@ -232,6 +257,7 @@ export class ZendeskClient {
       totalMetricSets: totalMetricSetCount,
       firstReplyCalendarCount: totalFirstReplyCalendarCount,
       firstReplyBusinessCount: totalFirstReplyBusinessCount,
+      firstReplySecondsCount: totalFirstReplySecondsCount,
       processedFirstReplyCount: totalProcessedFirstReplyCount,
     });
     if (totalFirstReplyCalendarCount === 0) {
@@ -269,6 +295,7 @@ export class ZendeskClient {
         first_resolution_time_in_minutes: metric.first_resolution_time_in_minutes ?? null,
         full_resolution_time_in_minutes: metric.full_resolution_time_in_minutes ?? null,
         first_reply_time_in_minutes: metric.first_reply_time_in_minutes ?? null,
+        first_reply_time_in_seconds: metric.first_reply_time_in_seconds ?? null,
         reply_time_in_minutes: metric.reply_time_in_minutes ?? null,
         agent_wait_time_in_minutes: metric.agent_wait_time_in_minutes ?? null,
         requester_wait_time_in_minutes: metric.requester_wait_time_in_minutes ?? null,

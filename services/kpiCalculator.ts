@@ -23,6 +23,7 @@ interface FirstReplyMetricInfo {
   source: FirstReplyMetricSource;
   calendarMinutes: number | null;
   businessMinutes: number | null;
+  secondsValue: number | null;
 }
 
 // Debug logger
@@ -92,6 +93,10 @@ function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
   const metricTime = ticket.metric_set?.first_reply_time_in_minutes ?? null;
   const calendarMinutes = typeof metricTime?.calendar === 'number' ? metricTime.calendar : null;
   const businessMinutes = typeof metricTime?.business === 'number' ? metricTime.business : null;
+  const metricSeconds = ticket.metric_set?.first_reply_time_in_seconds ?? null;
+  const calendarSeconds = typeof metricSeconds?.calendar === 'number' ? metricSeconds.calendar : null;
+  const businessSeconds = typeof metricSeconds?.business === 'number' ? metricSeconds.business : null;
+  const secondsValue = calendarSeconds ?? businessSeconds ?? (typeof ticket.first_reply_time_seconds === 'number' ? ticket.first_reply_time_seconds : null);
 
   let rawMinutes: number | null = null;
   let source: FirstReplyMetricSource = 'none';
@@ -105,6 +110,9 @@ function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
   } else if (businessMinutes !== null) {
     rawMinutes = businessMinutes;
     source = 'metric_set_business';
+  } else if (typeof secondsValue === 'number') {
+    rawMinutes = secondsValue / 60;
+    source = 'metric_set_business';
   }
 
   const minutes = rawMinutes !== null && rawMinutes > 0 ? rawMinutes : null;
@@ -115,6 +123,7 @@ function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
     source,
     calendarMinutes,
     businessMinutes,
+    secondsValue,
   };
 }
 
@@ -189,6 +198,7 @@ export function calculateKPIsForWeek(
       source: metricInfo.source,
       calendarMinutes: metricInfo.calendarMinutes,
       businessMinutes: metricInfo.businessMinutes,
+      secondsValue: metricInfo.secondsValue,
     };
   });
 
@@ -196,6 +206,9 @@ export function calculateKPIsForWeek(
     (stats, measurement) => {
       stats.total += 1;
       stats.sourceCounts[measurement.source] = (stats.sourceCounts[measurement.source] ?? 0) + 1;
+      if (typeof measurement.secondsValue === 'number') {
+        stats.secondsCount += 1;
+      }
 
       if (measurement.rawMinutes === null) {
         stats.nullCount += 1;
@@ -218,6 +231,7 @@ export function calculateKPIsForWeek(
           rawMinutes: measurement.rawMinutes,
           calendar: measurement.calendarMinutes,
           business: measurement.businessMinutes,
+          seconds: measurement.secondsValue,
         });
       }
 
@@ -234,6 +248,7 @@ export function calculateKPIsForWeek(
         metric_set_business: 0,
         none: 0,
       } as Record<FirstReplyMetricSource, number>,
+      secondsCount: 0,
       nullSamples: [] as number[],
       zeroSamples: [] as { id: number; rawMinutes: number | null }[],
       metricSamples: [] as Array<{
@@ -242,6 +257,7 @@ export function calculateKPIsForWeek(
         rawMinutes: number | null;
         calendar: number | null;
         business: number | null;
+        seconds: number | null;
       }>,
     },
   );
@@ -255,6 +271,7 @@ export function calculateKPIsForWeek(
     nullSamples: frtMetricStats.nullSamples,
     zeroSamples: frtMetricStats.zeroSamples,
     metricSamples: frtMetricStats.metricSamples,
+    secondsCount: frtMetricStats.secondsCount,
   });
 
   if (frtMetricStats.total > 0) {
@@ -287,7 +304,18 @@ export function calculateKPIsForWeek(
     zeroOrNegativeCount: frtMetricStats.zeroCount,
     nullSamples: frtMetricStats.nullSamples,
     zeroSamples: frtMetricStats.zeroSamples,
+    secondsCount: frtMetricStats.secondsCount,
   });
+
+  if (frtMetricStats.nullSamples.length > 0) {
+    const nullSampleTickets = frtMetricStats.nullSamples.slice(0, 10).map(id => frtWindowMeasurements.find(m => m.ticket.id === id));
+    console.debug('[KPI Debug] first_reply_time null sample metric_sets', nullSampleTickets
+      ?.filter(sample => sample && sample.ticket.metric_set)
+      .map(sample => ({
+        id: sample!.ticket.id,
+        metric_set: sample!.ticket.metric_set,
+      })));
+  }
 
   const frtDistribution = buildFRTDistribution(
     weekTickets,
@@ -300,6 +328,7 @@ export function calculateKPIsForWeek(
         source: metricInfo.source,
         calendarMinutes: metricInfo.calendarMinutes,
         businessMinutes: metricInfo.businessMinutes,
+        secondsValue: metricInfo.secondsValue,
       };
     })
   );
@@ -371,6 +400,7 @@ type FRTMeasurement = {
   source: FirstReplyMetricSource;
   calendarMinutes: number | null;
   businessMinutes: number | null;
+  secondsValue: number | null;
 };
 
 function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMeasurement[]): FRTDistribution {
