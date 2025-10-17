@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -624,10 +625,10 @@ const Sidebar: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, o
               <span>VOC Dashboard</span>
             </a>
             <div className="border-t border-gray-700 mt-6 pt-6">
-              <a href="/embed-chart" className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-[#282929]">
+              <Link href="/embed-chart" className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-[#282929]">
                 <BarChart3 className="w-5 h-5" />
                 <span>EmbedChart</span>
-              </a>
+              </Link>
               <a href="#" className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-[#282929]">
                 <Settings className="w-5 h-5" />
                 <span>Settings</span>
