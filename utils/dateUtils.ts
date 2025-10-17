@@ -64,6 +64,22 @@ export function getWeekRange(offsetWeeks = 0): WeekRange {
   return getWeekRangeForDate(new Date(), offsetWeeks);
 }
 
+function buildZendeskLocalDate(dateString: string): Date {
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+export function parseZendeskDate(dateString: string): Date {
+  return fromZendeskTimezone(buildZendeskLocalDate(dateString));
+}
+
+export function getZendeskDisplayRange(startDateString: string, endDateString: string): { start: Date; endInclusive: Date } {
+  const start = buildZendeskLocalDate(startDateString);
+  const endExclusive = buildZendeskLocalDate(endDateString);
+  const endInclusive = new Date(endExclusive.getTime() - MS_PER_DAY);
+  return { start, endInclusive };
+}
+
 /**
  * Get date range for a specific period type ('week' or 'day') relative to a reference date.
  * @param referenceDate The reference date (defaults to current date)
