@@ -19,7 +19,7 @@ function computeYAxis(stepCount: number, values: number[]): number[] {
   return Array.from({ length: stepCount }, (_, index) => step * index);
 }
 
-export default function WeeklyEmbedPage(): JSX.Element {
+export default function EmbedChartPage(): JSX.Element {
   const [data, setData] = useState<WeeklyKPIResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,8 +73,15 @@ export default function WeeklyEmbedPage(): JSX.Element {
         )}
         {!isLoading && !error && chartData && chartData.labels.length > 0 && (
           <div className="w-full overflow-hidden rounded-2xl bg-[#232424] shadow-xl">
-            <div className="w-full" style={{ aspectRatio: "16 / 9" }}>
-              <svg width="100%" height="100%" viewBox="0 0 960 540">
+            {/* 제목 추가 */}
+            <div className="px-8 pt-6 pb-4">
+              <h2 className="text-xl font-semibold text-white">
+                Weekly Tickets: In vs Resolved
+              </h2>
+            </div>
+
+            <div className="w-full px-8" style={{ aspectRatio: "16 / 9" }}>
+              <svg width="100%" height="100%" viewBox="0 0 960 540" preserveAspectRatio="xMidYMid meet">
                 <rect x="0" y="0" width="960" height="540" fill="transparent" />
                 
                 {/* Y축 */}
@@ -118,7 +125,7 @@ export default function WeeklyEmbedPage(): JSX.Element {
                   
                   // 위치 계산
                   const totalGroups = chartData.labels.length;
-                  const chartWidth = 820; // 900 - 80 (y축 공간)
+                  const chartWidth = 820;
                   const groupWidth = chartWidth / totalGroups;
                   const centerX = 80 + (index + 0.5) * groupWidth;
                   
@@ -131,13 +138,13 @@ export default function WeeklyEmbedPage(): JSX.Element {
                   const inHeight = Math.max(0, (inValue / safeMax) * 380);
                   const resolvedHeight = Math.max(0, (resolvedValue / safeMax) * 380);
                   
-                  // 둥근 모서리 반경 (높이와 너비의 최소값보다 작아야 함)
-                  const cornerRadiusIn = inHeight > 0 ? Math.min(6, barWidth / 2, inHeight / 2) : 0;
-                  const cornerRadiusResolved = resolvedHeight > 0 ? Math.min(6, barWidth / 2, resolvedHeight / 2) : 0;
+                  // 둥근 모서리 반경
+                  const cornerRadiusIn = inHeight > 0 ? Math.min(8, barWidth / 2) : 0;
+                  const cornerRadiusResolved = resolvedHeight > 0 ? Math.min(8, barWidth / 2) : 0;
 
                   return (
                     <g key={`bar-${index}`}>
-                      {/* Tickets In - Teal */}
+                      {/* Tickets In - Teal (왼쪽) */}
                       <rect
                         x={centerX - barWidth - barSpacing / 2}
                         y={440 - inHeight}
@@ -146,9 +153,10 @@ export default function WeeklyEmbedPage(): JSX.Element {
                         fill="#4FBDBA"
                         rx={cornerRadiusIn}
                         ry={cornerRadiusIn}
+                        style={{ fill: '#4FBDBA' }}
                       />
                       
-                      {/* Resolved - Yellow */}
+                      {/* Resolved - Yellow (오른쪽) */}
                       <rect
                         x={centerX + barSpacing / 2}
                         y={440 - resolvedHeight}
@@ -157,6 +165,7 @@ export default function WeeklyEmbedPage(): JSX.Element {
                         fill="#F3C969"
                         rx={cornerRadiusResolved}
                         ry={cornerRadiusResolved}
+                        style={{ fill: '#F3C969' }}
                       />
                       
                       {/* X축 라벨 */}
@@ -166,6 +175,7 @@ export default function WeeklyEmbedPage(): JSX.Element {
                         fill="#9CA3AF" 
                         fontSize="16" 
                         textAnchor="middle"
+                        style={{ fill: '#9CA3AF' }}
                       >
                         {label}
                       </text>
@@ -175,15 +185,19 @@ export default function WeeklyEmbedPage(): JSX.Element {
               </svg>
             </div>
 
-            {/* 범례 */}
+            {/* 범례 - 수정된 부분 */}
             <div className="flex flex-wrap items-center justify-center gap-6 px-8 py-6">
               {LEGEND_ITEMS.map(item => (
-                <div key={item.label} className="flex items-center text-sm text-gray-300">
+                <div key={item.label} className="flex items-center gap-2 text-sm text-gray-300">
                   <span 
-                    className="mr-2 h-3 w-3 rounded" 
-                    style={{ backgroundColor: item.color }} 
+                    className="block h-3 w-3 rounded"
+                    style={{ 
+                      backgroundColor: item.color,
+                      minWidth: '12px',
+                      minHeight: '12px'
+                    }}
                   />
-                  {item.label}
+                  <span>{item.label}</span>
                 </div>
               ))}
             </div>
