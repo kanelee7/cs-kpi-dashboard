@@ -74,13 +74,13 @@ export default function EmbedChartPage(): JSX.Element {
         {!isLoading && !error && chartData && chartData.labels.length > 0 && (
           <div className="w-full overflow-hidden rounded-2xl bg-[#232424] shadow-xl">
             {/* 제목 추가 */}
-            <div className="px-8 pt-6 pb-4">
+            <div className="px-8 pt-6 pb-2">
               <h2 className="text-xl font-semibold text-white">
                 Weekly Tickets: In vs Resolved
               </h2>
             </div>
 
-            <div className="w-full px-8" style={{ aspectRatio: "16 / 9" }}>
+            <div className="w-full px-8 pb-2" style={{ aspectRatio: "16 / 9" }}>
               <svg width="100%" height="100%" viewBox="0 0 960 540" preserveAspectRatio="xMidYMid meet">
                 <rect x="0" y="0" width="960" height="540" fill="transparent" />
                 
@@ -186,7 +186,7 @@ export default function EmbedChartPage(): JSX.Element {
             </div>
 
             {/* 범례 - 수정된 부분 */}
-            <div className="flex flex-wrap items-center justify-center gap-6 px-8 py-6">
+            <div className="flex flex-wrap items-center justify-center gap-6 px-8 pb-6 pt-2">
               {LEGEND_ITEMS.map(item => (
                 <div key={item.label} className="flex items-center gap-2 text-sm text-gray-300">
                   <span 
