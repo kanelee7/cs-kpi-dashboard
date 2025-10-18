@@ -76,51 +76,97 @@ export default function WeeklyEmbedPage(): JSX.Element {
             <div className="w-full" style={{ aspectRatio: "16 / 9" }}>
               <svg width="100%" height="100%" viewBox="0 0 960 540">
                 <rect x="0" y="0" width="960" height="540" fill="transparent" />
+                
+                {/* Y축 */}
                 <line x1="80" y1="60" x2="80" y2="440" stroke="#374151" strokeWidth="2" />
+                
+                {/* X축 */}
                 <line x1="80" y1="440" x2="900" y2="440" stroke="#374151" strokeWidth="2" />
 
+                {/* Y축 그리드 라인과 라벨 */}
                 {chartData.yAxisValues.map((value, index) => {
                   const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
-                  const y = 440 - (value / safeMax) * 360;
+                  const y = 440 - (value / safeMax) * 380;
                   return (
                     <g key={`y-${index}`}>
-                      <line x1="80" y1={y} x2="900" y2={y} stroke="#374151" strokeWidth="1" opacity="0.2" />
-                      <text x="70" y={y + 4} fill="#9CA3AF" fontSize="18" textAnchor="end">
+                      <line 
+                        x1="80" 
+                        y1={y} 
+                        x2="900" 
+                        y2={y} 
+                        stroke="#374151" 
+                        strokeWidth="1" 
+                        opacity="0.2" 
+                      />
+                      <text 
+                        x="70" 
+                        y={y + 4} 
+                        fill="#9CA3AF" 
+                        fontSize="18" 
+                        textAnchor="end"
+                      >
                         {value}
                       </text>
                     </g>
                   );
                 })}
 
+                {/* 바 차트 */}
                 {chartData.inValues.map((inValue, index) => {
                   const resolvedValue = chartData.resolvedValues[index] ?? 0;
                   const label = chartData.labels[index] ?? "";
-                  const barGroupWidth = 720 / Math.max(chartData.labels.length, 1);
-                  const groupX = 120 + index * barGroupWidth;
-                  const barWidth = Math.min(56, barGroupWidth / 2.4);
+                  
+                  // 위치 계산
+                  const totalGroups = chartData.labels.length;
+                  const chartWidth = 820; // 900 - 80 (y축 공간)
+                  const groupWidth = chartWidth / totalGroups;
+                  const centerX = 80 + (index + 0.5) * groupWidth;
+                  
+                  // 바 크기 계산
+                  const barWidth = Math.min(50, groupWidth / 3);
+                  const barSpacing = 4;
+                  
+                  // 높이 계산
                   const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
-                  const inHeight = (inValue / safeMax) * 360;
-                  const resolvedHeight = (resolvedValue / safeMax) * 360;
+                  const inHeight = Math.max(0, (inValue / safeMax) * 380);
+                  const resolvedHeight = Math.max(0, (resolvedValue / safeMax) * 380);
+                  
+                  // 둥근 모서리 반경 (높이와 너비의 최소값보다 작아야 함)
+                  const cornerRadiusIn = inHeight > 0 ? Math.min(6, barWidth / 2, inHeight / 2) : 0;
+                  const cornerRadiusResolved = resolvedHeight > 0 ? Math.min(6, barWidth / 2, resolvedHeight / 2) : 0;
 
                   return (
                     <g key={`bar-${index}`}>
+                      {/* Tickets In - Teal */}
                       <rect
-                        x={groupX - barWidth}
+                        x={centerX - barWidth - barSpacing / 2}
                         y={440 - inHeight}
                         width={barWidth}
                         height={inHeight}
                         fill="#4FBDBA"
-                        rx="6"
+                        rx={cornerRadiusIn}
+                        ry={cornerRadiusIn}
                       />
+                      
+                      {/* Resolved - Yellow */}
                       <rect
-                        x={groupX + 8}
+                        x={centerX + barSpacing / 2}
                         y={440 - resolvedHeight}
                         width={barWidth}
                         height={resolvedHeight}
                         fill="#F3C969"
-                        rx="6"
+                        rx={cornerRadiusResolved}
+                        ry={cornerRadiusResolved}
                       />
-                      <text x={groupX + barWidth / 2} y="470" fill="#9CA3AF" fontSize="18" textAnchor="middle">
+                      
+                      {/* X축 라벨 */}
+                      <text 
+                        x={centerX} 
+                        y="470" 
+                        fill="#9CA3AF" 
+                        fontSize="16" 
+                        textAnchor="middle"
+                      >
                         {label}
                       </text>
                     </g>
@@ -129,10 +175,14 @@ export default function WeeklyEmbedPage(): JSX.Element {
               </svg>
             </div>
 
+            {/* 범례 */}
             <div className="flex flex-wrap items-center justify-center gap-6 px-8 py-6">
               {LEGEND_ITEMS.map(item => (
                 <div key={item.label} className="flex items-center text-sm text-gray-300">
-                  <span className="mr-2 h-3 w-3 rounded" style={{ backgroundColor: item.color }} />
+                  <span 
+                    className="mr-2 h-3 w-3 rounded" 
+                    style={{ backgroundColor: item.color }} 
+                  />
                   {item.label}
                 </div>
               ))}
