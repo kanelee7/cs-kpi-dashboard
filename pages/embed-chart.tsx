@@ -158,6 +158,11 @@ export default function EmbedChartPage(): JSX.Element {
                   const cornerRadiusIn = inHeight > 0 ? Math.min(8, barWidth / 2) : 0;
                   const cornerRadiusResolved = resolvedHeight > 0 ? Math.min(8, barWidth / 2) : 0;
 
+                  const inLabelX = centerX - barSpacing / 2 - barWidth / 2;
+                  const inLabelY = (yAxisBottom - inHeight) - 5;
+                  const resolvedLabelX = centerX + barSpacing / 2 + barWidth / 2;
+                  const resolvedLabelY = (yAxisBottom - resolvedHeight) - 5;
+
                   return (
                     <g key={`bar-${index}`}>
                       {/* Tickets In - Teal (왼쪽) */}
@@ -171,6 +176,18 @@ export default function EmbedChartPage(): JSX.Element {
                         ry={cornerRadiusIn}
                         style={{ fill: '#4FBDBA' }}
                       />
+                      <text
+                        x={inLabelX}
+                        y={inLabelY}
+                        textAnchor="middle"
+                        dominantBaseline="auto"
+                        fill="#F5F5F5"
+                        fontSize="12px"
+                        fontWeight="600"
+                        fontFamily="Arial, sans-serif"
+                      >
+                        {Math.round(inValue)}
+                      </text>
                       
                       {/* Resolved - Yellow (오른쪽) */}
                       <rect
@@ -183,6 +200,18 @@ export default function EmbedChartPage(): JSX.Element {
                         ry={cornerRadiusResolved}
                         style={{ fill: '#F3C969' }}
                       />
+                      <text
+                        x={resolvedLabelX}
+                        y={resolvedLabelY}
+                        textAnchor="middle"
+                        dominantBaseline="auto"
+                        fill="#F5F5F5"
+                        fontSize="12px"
+                        fontWeight="600"
+                        fontFamily="Arial, sans-serif"
+                      >
+                        {Math.round(resolvedValue)}
+                      </text>
                       
                       {/* X축 라벨 */}
                       <text 
