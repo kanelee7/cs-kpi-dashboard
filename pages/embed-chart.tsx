@@ -62,11 +62,22 @@ export default function EmbedChartPage(): JSX.Element {
     return { labels, inValues, resolvedValues, yAxisValues, maxAxisValue };
   }, [data]);
 
+  const svgWidth = 960;
+  const svgHeight = 480; // 2:1 ratio
+  const yAxisTop = 40;
+  const yAxisBottom = svgHeight - 60;
+  const yDrawHeight = yAxisBottom - yAxisTop; // 380
+  const xAxisLeft = 80;
+  const xAxisRight = svgWidth - 60;
+
   return (
     <div className="min-h-screen bg-[#1f2020] text-white">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
         {isLoading && (
-          <div className="text-gray-300 text-base">Loading chart...</div>
+          <div className="flex min-h-[320px] flex-col items-center justify-center text-center">
+            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-[#4FBDBA]" />
+            <p className="text-gray-400">Loading chart...</p>
+          </div>
         )}
         {!isLoading && error && (
           <div className="text-red-400 text-base">{error}</div>
@@ -74,42 +85,47 @@ export default function EmbedChartPage(): JSX.Element {
         {!isLoading && !error && chartData && chartData.labels.length > 0 && (
           <div className="w-full overflow-hidden rounded-2xl bg-[#232424] shadow-xl">
             {/* 제목 추가 */}
-            <div className="px-8 pt-6 pb-2">
+            <div className="px-8 pt-6 pb-1">
               <h2 className="text-xl font-semibold text-white">
                 Weekly Tickets: In vs Resolved
               </h2>
             </div>
 
-            <div className="w-full px-8 pb-2" style={{ aspectRatio: "16 / 9" }}>
-              <svg width="100%" height="100%" viewBox="0 0 960 540" preserveAspectRatio="xMidYMid meet">
-                <rect x="0" y="0" width="960" height="540" fill="transparent" />
+            <div className="w-full px-8 pb-1" style={{ aspectRatio: "2 / 1" }}>
+              <svg
+                width="100%"
+                height="100%"
+                viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                preserveAspectRatio="xMidYMid meet"
+              >
+                <rect x="0" y="0" width={svgWidth} height={svgHeight} fill="transparent" />
                 
                 {/* Y축 */}
-                <line x1="80" y1="60" x2="80" y2="440" stroke="#374151" strokeWidth="2" />
+                <line x1={xAxisLeft} y1={yAxisTop} x2={xAxisLeft} y2={yAxisBottom} stroke="#374151" strokeWidth="2" />
                 
                 {/* X축 */}
-                <line x1="80" y1="440" x2="900" y2="440" stroke="#374151" strokeWidth="2" />
+                <line x1={xAxisLeft} y1={yAxisBottom} x2={xAxisRight} y2={yAxisBottom} stroke="#374151" strokeWidth="2" />
 
                 {/* Y축 그리드 라인과 라벨 */}
                 {chartData.yAxisValues.map((value, index) => {
                   const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
-                  const y = 440 - (value / safeMax) * 380;
+                  const y = yAxisBottom - (value / safeMax) * yDrawHeight;
                   return (
                     <g key={`y-${index}`}>
-                      <line 
-                        x1="80" 
-                        y1={y} 
-                        x2="900" 
-                        y2={y} 
-                        stroke="#374151" 
-                        strokeWidth="1" 
-                        opacity="0.2" 
+                      <line
+                        x1={xAxisLeft}
+                        y1={y}
+                        x2={xAxisRight}
+                        y2={y}
+                        stroke="#374151"
+                        strokeWidth="1"
+                        opacity="0.2"
                       />
-                      <text 
-                        x="70" 
-                        y={y + 4} 
-                        fill="#9CA3AF" 
-                        fontSize="18" 
+                      <text
+                        x={xAxisLeft - 10}
+                        y={y + 4}
+                        fill="#9CA3AF"
+                        fontSize="16"
                         textAnchor="end"
                       >
                         {value}
@@ -125,9 +141,9 @@ export default function EmbedChartPage(): JSX.Element {
                   
                   // 위치 계산
                   const totalGroups = chartData.labels.length;
-                  const chartWidth = 820;
+                  const chartWidth = xAxisRight - xAxisLeft;
                   const groupWidth = chartWidth / totalGroups;
-                  const centerX = 80 + (index + 0.5) * groupWidth;
+                  const centerX = xAxisLeft + (index + 0.5) * groupWidth;
                   
                   // 바 크기 계산
                   const barWidth = Math.min(50, groupWidth / 3);
@@ -135,8 +151,8 @@ export default function EmbedChartPage(): JSX.Element {
                   
                   // 높이 계산
                   const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
-                  const inHeight = Math.max(0, (inValue / safeMax) * 380);
-                  const resolvedHeight = Math.max(0, (resolvedValue / safeMax) * 380);
+                  const inHeight = Math.max(0, (inValue / safeMax) * yDrawHeight);
+                  const resolvedHeight = Math.max(0, (resolvedValue / safeMax) * yDrawHeight);
                   
                   // 둥근 모서리 반경
                   const cornerRadiusIn = inHeight > 0 ? Math.min(8, barWidth / 2) : 0;
@@ -147,7 +163,7 @@ export default function EmbedChartPage(): JSX.Element {
                       {/* Tickets In - Teal (왼쪽) */}
                       <rect
                         x={centerX - barWidth - barSpacing / 2}
-                        y={440 - inHeight}
+                        y={yAxisBottom - inHeight}
                         width={barWidth}
                         height={inHeight}
                         fill="#4FBDBA"
@@ -159,7 +175,7 @@ export default function EmbedChartPage(): JSX.Element {
                       {/* Resolved - Yellow (오른쪽) */}
                       <rect
                         x={centerX + barSpacing / 2}
-                        y={440 - resolvedHeight}
+                        y={yAxisBottom - resolvedHeight}
                         width={barWidth}
                         height={resolvedHeight}
                         fill="#F3C969"
@@ -171,7 +187,7 @@ export default function EmbedChartPage(): JSX.Element {
                       {/* X축 라벨 */}
                       <text 
                         x={centerX} 
-                        y="470" 
+                        y={yAxisBottom + 28}
                         fill="#9CA3AF" 
                         fontSize="16" 
                         textAnchor="middle"
@@ -186,7 +202,7 @@ export default function EmbedChartPage(): JSX.Element {
             </div>
 
             {/* 범례 - 수정된 부분 */}
-            <div className="flex flex-wrap items-center justify-center gap-6 px-8 pb-6 pt-2">
+            <div className="flex flex-wrap items-center justify-center gap-6 px-8 pb-6 pt-1">
               {LEGEND_ITEMS.map(item => (
                 <div key={item.label} className="flex items-center gap-2 text-sm text-gray-300">
                   <span 
