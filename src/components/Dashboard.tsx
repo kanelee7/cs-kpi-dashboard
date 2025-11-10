@@ -732,46 +732,118 @@ export default function Dashboard() {
     );
   }
 
+  // Calculate actual changes from previous week
+  const calculateChange = (current: number, previous: number, isPercentage: boolean = false, isTime: boolean = false): { change: string; trend: 'up' | 'down' | 'neutral' } => {
+    if (!previous || previous === 0) {
+      return { change: 'N/A', trend: 'neutral' };
+    }
+
+    if (isTime) {
+      // For time values, show absolute difference
+      const diff = current - previous;
+      const hours = Math.abs(diff);
+      const minutes = Math.round((hours - Math.floor(hours)) * 60);
+      
+      if (diff === 0) {
+        return { change: '0h', trend: 'neutral' };
+      } else if (Math.abs(diff) < 1) {
+        // Less than 1 hour, show in minutes
+        const totalMinutes = Math.round(diff * 60);
+        return {
+          change: `${totalMinutes > 0 ? '+' : ''}${totalMinutes}min`,
+          trend: diff < 0 ? 'up' : 'down' // Lower time is better (up trend)
+        };
+      } else {
+        // Show in hours
+        const sign = diff > 0 ? '+' : '';
+        return {
+          change: `${sign}${Math.floor(hours)}h${minutes > 0 ? ` ${minutes}min` : ''}`,
+          trend: diff < 0 ? 'up' : 'down' // Lower time is better (up trend)
+        };
+      }
+    }
+
+    const percentChange = ((current - previous) / previous) * 100;
+    
+    if (Math.abs(percentChange) < 0.1) {
+      return { change: '0%', trend: 'neutral' };
+    }
+
+    const sign = percentChange > 0 ? '+' : '';
+    const formattedChange = `${sign}${percentChange.toFixed(1)}%`;
+    
+    // For most metrics, higher is better (up trend), except for time-based metrics
+    const trend = percentChange > 0 ? 'up' : 'down';
+    
+    return { change: formattedChange, trend };
+  };
+
+  const weeklyTicketsIn = kpiData?.weeklyTicketsIn || [];
+  const weeklyTicketsResolved = kpiData?.weeklyTicketsResolved || [];
+  const frtTrend = kpiData?.trends?.frt || [];
+  const ahtTrend = kpiData?.trends?.aht || [];
+  const fcrTrend = kpiData?.trends?.fcr || [];
+
+  const currentTicketsIn = weeklyTicketsIn[weeklyTicketsIn.length - 1] || 0;
+  const previousTicketsIn = weeklyTicketsIn[weeklyTicketsIn.length - 2] || 0;
+  const ticketsInChange = calculateChange(currentTicketsIn, previousTicketsIn);
+
+  const currentTicketsResolved = weeklyTicketsResolved[weeklyTicketsResolved.length - 1] || 0;
+  const previousTicketsResolved = weeklyTicketsResolved[weeklyTicketsResolved.length - 2] || 0;
+  const ticketsResolvedChange = calculateChange(currentTicketsResolved, previousTicketsResolved);
+
+  const currentFrt = kpiData?.frtMedian || 0;
+  const previousFrt = frtTrend[frtTrend.length - 2] || 0;
+  const frtChange = calculateChange(currentFrt, previousFrt, false, true);
+
+  const currentAht = kpiData?.avgHandleTime || 0;
+  const previousAht = ahtTrend[ahtTrend.length - 2] || 0;
+  const ahtChange = calculateChange(currentAht, previousAht, false, true);
+
+  const currentFcr = kpiData?.fcrRate || 0;
+  const previousFcr = fcrTrend[fcrTrend.length - 2] || 0;
+  const fcrChange = calculateChange(currentFcr, previousFcr, true);
+
   const kpiCards = [
     {
       title: 'Weekly Tickets In',
-      value: kpiData?.weeklyTicketsIn?.[kpiData.weeklyTicketsIn.length - 1]?.toString() || '0',
-      change: '+12.5%',
-      trend: 'up' as const,
+      value: currentTicketsIn.toString(),
+      change: ticketsInChange.change,
+      trend: ticketsInChange.trend,
       icon: <FileText className="w-5 h-5" />,
-      sparklineData: kpiData?.weeklyTicketsIn || [],
+      sparklineData: weeklyTicketsIn,
     },
     {
       title: 'Weekly Tickets Resolved',
-      value: kpiData?.weeklyTicketsResolved?.[kpiData.weeklyTicketsResolved.length - 1]?.toString() || '0',
-      change: '+8.3%',
-      trend: 'up' as const,
+      value: currentTicketsResolved.toString(),
+      change: ticketsResolvedChange.change,
+      trend: ticketsResolvedChange.trend,
       icon: <CheckCircle className="w-5 h-5" />,
-      sparklineData: kpiData?.weeklyTicketsResolved || [],
+      sparklineData: weeklyTicketsResolved,
     },
     {
       title: 'FRT Median',
-      value: `${(kpiData?.frtMedian || 0).toFixed(1)}h`,
-      change: '-15min',
-      trend: 'up' as const,
+      value: `${currentFrt.toFixed(1)}h`,
+      change: frtChange.change,
+      trend: frtChange.trend,
       icon: <Clock className="w-5 h-5" />,
-      sparklineData: kpiData?.trends?.frt || [],
+      sparklineData: frtTrend,
     },
     {
       title: 'Average Handle Time',
-      value: `${(kpiData?.avgHandleTime || 0).toFixed(1)}h`,
-      change: '-2.1h',
-      trend: 'up' as const,
+      value: `${currentAht.toFixed(1)}h`,
+      change: ahtChange.change,
+      trend: ahtChange.trend,
       icon: <Clock className="w-5 h-5" />,
-      sparklineData: kpiData?.trends?.aht || [],
+      sparklineData: ahtTrend,
     },
     {
       title: 'FCR %',
-      value: `${(kpiData?.fcrRate || 0).toFixed(1)}%`,
-      change: '+3.1%',
-      trend: 'up' as const,
+      value: `${currentFcr.toFixed(1)}%`,
+      change: fcrChange.change,
+      trend: fcrChange.trend,
       icon: <TrendingUp className="w-5 h-5" />,
-      sparklineData: kpiData?.trends?.fcr || [],
+      sparklineData: fcrTrend,
     },
   ];
 

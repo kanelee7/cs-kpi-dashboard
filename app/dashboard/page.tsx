@@ -180,7 +180,11 @@ export default function DashboardPage() {
                   {formatNumber(kpiData.reduce((sum, kpi) => sum + kpi.tickets_resolved, 0))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  해결률: {kpiData.length > 0 ? formatPercentage(kpiData.reduce((sum, kpi) => sum + kpi.tickets_resolved, 0) / kpiData.reduce((sum, kpi) => sum + kpi.tickets_in, 0) * 100) : '0%'}
+                  해결률: {kpiData.length > 0 ? (() => {
+                    const totalIn = kpiData.reduce((sum, kpi) => sum + kpi.tickets_in, 0)
+                    const totalResolved = kpiData.reduce((sum, kpi) => sum + kpi.tickets_resolved, 0)
+                    return totalIn > 0 ? formatPercentage((totalResolved / totalIn) * 100) : '0%'
+                  })() : '0%'}
                 </p>
               </CardContent>
             </Card>

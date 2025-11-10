@@ -253,11 +253,15 @@ async function calculateKPIsForWeek(tickets: ZendeskTicket[], weekStart: Date, w
 
   // Filter resolved tickets for the specific week
   // Count tickets that were SOLVED in this week (based on solved_at date)
+  // Note: We count based on solved_at date, not current status
+  // This means tickets that were solved in this week but later reopened are still counted
   const resolvedTickets = tickets.filter(ticket => {
+    // 'solved_at'이 해당 주에 속하는 것을 우선적으로 카운트
     if (!ticket.solved_at) return false
     
     const solvedAt = new Date(ticket.solved_at)
     return solvedAt >= weekStart && solvedAt <= weekEnd
+    // 이 때 status는 꼭 체크하지 않아도 됨(이미 solved된 순간을 카운트하니까)
   })
 
   // Filter tickets for FRT calculation (last 30 days from week end)
