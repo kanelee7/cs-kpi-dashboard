@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { getZendeskWeekNumber, getZendeskDisplayRange, parseZendeskDate } from '../../../utils/dateUtils'
 
 type FRTDistribution = Record<'0-1h' | '1-8h' | '8-24h' | '>24h' | 'No Reply', number>
 
@@ -35,34 +36,16 @@ function cloneBreakdown(breakdown: FCRBreakdown): FCRBreakdown {
   return { ...breakdown }
 }
 
-// Zendesk 주차 번호 계산 (일요일 기준)
-function getZendeskWeekNumber(date: Date): number {
-  const year = date.getUTCFullYear()
-  const startOfYear = new Date(Date.UTC(year, 0, 1, 15, 0, 0)) // 1월 1일 KST 00:00
-
-  // 1월 1일이 일요일이 아닌 경우, 첫 번째 일요일을 찾음
-  const firstSunday = new Date(startOfYear)
-  const dayOfWeek = startOfYear.getUTCDay()
-  if (dayOfWeek !== 0) {
-    firstSunday.setUTCDate(startOfYear.getUTCDate() + (7 - dayOfWeek))
-  }
-
-  const diffTime = date.getTime() - firstSunday.getTime()
-  const diffWeeks = Math.floor(diffTime / (7 * 24 * 60 * 60 * 1000))
-
-  return Math.max(1, diffWeeks + 1) // 최소 1주차
-}
-
 function formatWeekRange(startDateString: string, endDateString: string): string {
-  const start = new Date(startDateString)
-  const end = new Date(endDateString)
+  const { start, endInclusive } = getZendeskDisplayRange(startDateString, endDateString)
+
   const formatter = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
     timeZone: 'Asia/Seoul'
   })
 
-  return `${formatter.format(start)} – ${formatter.format(end)}`
+  return `${formatter.format(start)} – ${formatter.format(endInclusive)}`
 }
 
 type KPIRecord = {
@@ -222,21 +205,27 @@ export async function GET(request: Request) {
       return NextResponse.json(getSampleData(brand))
     }
 
-    const weeklyWeekNumbers = normalizedRecords.map(record =>
-      getZendeskWeekNumber(new Date(record.week_start_date))
-    )
-    const weeklyLabels = weeklyWeekNumbers.map(weekNumber => `Week ${weekNumber}`)
-    const weeklyRanges = normalizedRecords.map(record =>
-      formatWeekRange(record.week_start_date, record.week_end_date)
-    )
+    const normalizedWithWeek = normalizedRecords.map(record => {
+      const startDate = parseZendeskDate(record.week_start_date)
+      const weekNumber = getZendeskWeekNumber(startDate)
+      return {
+        ...record,
+        weekNumber,
+        weekLabel: `Week ${weekNumber}`,
+        weekRange: formatWeekRange(record.week_start_date, record.week_end_date)
+      }
+    })
 
-    const latestRecord = normalizedRecords[normalizedRecords.length - 1]
+    const weeklyLabels = normalizedWithWeek.map(record => record.weekLabel)
+    const weeklyRanges = normalizedWithWeek.map(record => record.weekRange)
 
-    const weeklyTicketsIn = normalizedRecords.map((record: KPIRecord) => record.tickets_in)
-    const weeklyTicketsResolved = normalizedRecords.map((record: KPIRecord) => record.tickets_resolved)
-    const weeklyFrt = normalizedRecords.map((record: KPIRecord) => record.frt_median)
-    const weeklyAht = normalizedRecords.map((record: KPIRecord) => record.aht)
-    const weeklyFcr = normalizedRecords.map((record: KPIRecord) => record.fcr_percent)
+    const latestRecord = normalizedWithWeek[normalizedWithWeek.length - 1]
+
+    const weeklyTicketsIn = normalizedWithWeek.map((record: KPIRecord & { weekNumber: number }) => record.tickets_in)
+    const weeklyTicketsResolved = normalizedWithWeek.map((record: KPIRecord & { weekNumber: number }) => record.tickets_resolved)
+    const weeklyFrt = normalizedWithWeek.map((record: KPIRecord & { weekNumber: number }) => record.frt_median)
+    const weeklyAht = normalizedWithWeek.map((record: KPIRecord & { weekNumber: number }) => record.aht)
+    const weeklyFcr = normalizedWithWeek.map((record: KPIRecord & { weekNumber: number }) => record.fcr_percent)
 
     // Transform Supabase data to match the expected API response format
     const response = {

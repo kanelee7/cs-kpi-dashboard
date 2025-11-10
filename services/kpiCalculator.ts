@@ -1,11 +1,10 @@
-import type { ZendeskTicket } from './zendeskClient';
-import { getDateRange } from '../utils/dateUtils';
+import { resolveFirstReplyMetrics } from './zendeskClient';
+import type { FirstReplyMetricResolution, ZendeskTicket } from './zendeskClient';
+import { getDateRange, toZendeskTimezone } from '../utils/dateUtils';
 
 // Constants (Zendesk Analytics와 동일한 값 사용)
-const MAX_AHT_HOURS = 168; // 7 days (Zendesk 표준)
+const MAX_AHT_HOURS = 168; // 7 days cap (internal policy, Zendesk doesn't enforce a max)
 const MAX_AHT_MINUTES = MAX_AHT_HOURS * 60;
-const FCR_ONE_TOUCH_HOURS = 24; // 24시간 내 1차 해결
-const FCR_TWO_TOUCH_HOURS = 72; // 72시간 내 2차 해결
 const FRT_WINDOW_DAYS = 45; // FRT 계산 기간 확장
 const AHT_WINDOW_DAYS = 45; // AHT 계산 기간 확장
 
@@ -17,9 +16,29 @@ const FRT_BUCKETS = {
   OVER_24H: Infinity    // 24시간 초과
 };
 
+type FirstReplyMetricSource = string;
+
+type FirstReplyMetricComponentsDetail = FirstReplyMetricResolution['components'];
+
+interface FirstReplyMetricInfo {
+  minutes: number | null;
+  rawMinutes: number | null;
+  source: FirstReplyMetricSource;
+  calendarMinutes: number | null;
+  businessMinutes: number | null;
+  secondsValue: number | null;
+  resolutionSource: string;
+  resolutionComponents: FirstReplyMetricComponentsDetail | null;
+}
+
 // Debug logger
 const debug = (message: string, data?: any) => {
-  if (process.env.NODE_ENV === 'development') {
+  const nodeEnv =
+    typeof globalThis !== 'undefined'
+      ? (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.NODE_ENV
+      : undefined;
+
+  if (nodeEnv === 'development') {
     console.debug(`[KPI Debug] ${message}`, data || '');
   }
 };
@@ -74,17 +93,90 @@ function cloneDistribution(): FRTDistribution {
   return { ...EMPTY_DISTRIBUTION };
 }
 
+function collectFirstReplyMetric(ticket: ZendeskTicket): FirstReplyMetricInfo {
+  const directMinutes = typeof ticket.first_reply_time_minutes === 'number' ? ticket.first_reply_time_minutes : null;
+  const directSeconds = typeof ticket.first_reply_time_seconds === 'number' ? ticket.first_reply_time_seconds : null;
+  let resolutionSource = ticket.first_reply_metric_source ?? (directMinutes !== null ? 'ticket' : 'none');
+  let resolutionComponents: FirstReplyMetricComponentsDetail | null = ticket.first_reply_metric_components ?? null;
+
+  if (!resolutionComponents && ticket.metric_set) {
+    const resolution = resolveFirstReplyMetrics(ticket.metric_set);
+    resolutionSource = resolution.source;
+    resolutionComponents = resolution.components;
+  }
+
+  const replyMinutes = ticket.metric_set?.reply_time_in_minutes ?? null;
+  const replyMinutesBusiness = typeof replyMinutes?.business === 'number' ? replyMinutes.business : null;
+  const replyMinutesCalendar = typeof replyMinutes?.calendar === 'number' ? replyMinutes.calendar : null;
+  const replyMinutesFallback = resolutionComponents?.replyMinutes?.combined ?? null;
+
+  const replySeconds = ticket.metric_set?.reply_time_in_seconds ?? null;
+  const replySecondsBusiness = typeof replySeconds?.business === 'number' ? replySeconds.business : null;
+  const replySecondsCalendar = typeof replySeconds?.calendar === 'number' ? replySeconds.calendar : null;
+  const replySecondsFallback = resolutionComponents?.replySeconds?.combined ?? null;
+
+  const firstReplyMinutesFallback = resolutionComponents?.firstReplyMinutes?.combined ?? null;
+  const firstReplySecondsFallback = resolutionComponents?.firstReplySeconds?.combined ?? null;
+
+  let rawMinutes: number | null = directMinutes !== null && directMinutes > 0 ? directMinutes : null;
+  let source: FirstReplyMetricSource = rawMinutes !== null ? (resolutionSource || 'ticket') : 'none';
+
+  if (rawMinutes === null || rawMinutes <= 0) {
+    if (replyMinutesBusiness && replyMinutesBusiness > 0) {
+      rawMinutes = replyMinutesBusiness;
+      source = 'reply_minutes_business';
+    } else if (replyMinutesCalendar && replyMinutesCalendar > 0) {
+      rawMinutes = replyMinutesCalendar;
+      source = 'reply_minutes_calendar';
+    } else if (replyMinutesFallback && replyMinutesFallback > 0) {
+      rawMinutes = replyMinutesFallback;
+      source = 'reply_minutes_combined';
+    } else if (firstReplyMinutesFallback && firstReplyMinutesFallback > 0) {
+      rawMinutes = firstReplyMinutesFallback;
+      source = 'first_reply_minutes_combined';
+    }
+  }
+
+  let secondsValue: number | null = directSeconds !== null && directSeconds > 0 ? directSeconds : null;
+  if (secondsValue === null || secondsValue <= 0) {
+    if (replySecondsBusiness && replySecondsBusiness > 0) {
+      secondsValue = replySecondsBusiness;
+    } else if (replySecondsCalendar && replySecondsCalendar > 0) {
+      secondsValue = replySecondsCalendar;
+    } else if (replySecondsFallback && replySecondsFallback > 0) {
+      secondsValue = replySecondsFallback;
+    } else if (firstReplySecondsFallback && firstReplySecondsFallback > 0) {
+      secondsValue = firstReplySecondsFallback;
+    }
+  }
+
+  if ((rawMinutes === null || rawMinutes <= 0) && secondsValue && secondsValue > 0) {
+    rawMinutes = secondsValue / 60;
+    if (source === 'none') {
+      source = 'reply_seconds_fallback';
+    }
+  }
+
+  const minutes = rawMinutes !== null && rawMinutes > 0 ? rawMinutes : null;
+
+  if ((!resolutionSource || resolutionSource === 'none') && source !== 'none') {
+    resolutionSource = source;
+  }
+
+  return {
+    minutes,
+    rawMinutes: minutes,
+    source,
+    calendarMinutes: replyMinutesCalendar,
+    businessMinutes: replyMinutesBusiness,
+    secondsValue,
+    resolutionSource,
+    resolutionComponents,
+  };
+}
+
 function getFirstReplyMinutes(ticket: ZendeskTicket): number | null {
-  if (typeof ticket.first_reply_time_minutes === 'number') {
-    return ticket.first_reply_time_minutes;
-  }
-
-  const metricValue = ticket.metric_set?.first_reply_time_in_minutes?.calendar ?? null;
-  if (typeof metricValue === 'number') {
-    return metricValue;
-  }
-
-  return getMinutesBetween(ticket.created_at, ticket.updated_at);
+  return collectFirstReplyMetric(ticket).minutes;
 }
 
 function getResolutionMinutes(ticket: ZendeskTicket): number | null {
@@ -119,7 +211,21 @@ export function calculateKPIsForWeek(
   weekStart: Date,
   weekEnd: Date,
 ): KPIData {
-  debug(`Calculating KPIs for week ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
+  const weekStartUTC = weekStart.toISOString();
+  const weekEndUTC = weekEnd.toISOString();
+  const weekStartZendesk = toZendeskTimezone(weekStart);
+  const weekEndZendesk = toZendeskTimezone(weekEnd);
+  const weekStartKst = new Date(weekStart.getTime() + 9 * 60 * 60 * 1000);
+  const weekEndKst = new Date(weekEnd.getTime() + 9 * 60 * 60 * 1000);
+
+  debug('KPI Week Range', {
+    weekStartUTC,
+    weekEndUTC,
+    weekStartZendesk: weekStartZendesk.toISOString(),
+    weekEndZendesk: weekEndZendesk.toISOString(),
+    weekStartKst: weekStartKst.toISOString(),
+    weekEndKst: weekEndKst.toISOString(),
+  });
   
   // Tickets created in the target week
   const weekTickets = filterTicketsByCreatedAt(tickets, weekStart, weekEnd);
@@ -131,18 +237,157 @@ export function calculateKPIsForWeek(
   // FRT Calculation (using Zendesk metrics with relaxed filters)
   const frtRangeStart = new Date(weekEnd.getTime() - FRT_WINDOW_DAYS * DAY_IN_MS);
   const frtWindowTickets = filterTicketsByCreatedAt(tickets, frtRangeStart, weekEnd);
-  const frtWindowMeasurements = frtWindowTickets.map(ticket => ({
-    ticket,
-    minutes: getFirstReplyMinutes(ticket)
-  }));
+  const frtWindowMeasurements = frtWindowTickets.map(ticket => {
+    const metricInfo = collectFirstReplyMetric(ticket);
+    return {
+      ticket,
+      minutes: metricInfo.minutes,
+      rawMinutes: metricInfo.rawMinutes,
+      source: metricInfo.source,
+      calendarMinutes: metricInfo.calendarMinutes,
+      businessMinutes: metricInfo.businessMinutes,
+      secondsValue: metricInfo.secondsValue,
+      resolutionSource: metricInfo.resolutionSource,
+      resolutionComponents: metricInfo.resolutionComponents,
+    };
+  });
+
+  const frtMetricStats = frtWindowMeasurements.reduce(
+    (stats, measurement) => {
+      stats.total += 1;
+      stats.sourceCounts[measurement.source] = (stats.sourceCounts[measurement.source] ?? 0) + 1;
+      const resolutionKey = measurement.resolutionSource || 'none';
+      stats.resolutionSourceCounts[resolutionKey] = (stats.resolutionSourceCounts[resolutionKey] ?? 0) + 1;
+      if (typeof measurement.secondsValue === 'number') {
+        stats.secondsCount += 1;
+      }
+
+      if (measurement.rawMinutes === null) {
+        stats.nullCount += 1;
+        if (stats.nullSamples.length < 5) {
+          stats.nullSamples.push(measurement.ticket.id);
+        }
+      } else if (measurement.rawMinutes <= 0) {
+        stats.zeroCount += 1;
+        if (stats.zeroSamples.length < 5) {
+          stats.zeroSamples.push({ id: measurement.ticket.id, rawMinutes: measurement.rawMinutes });
+        }
+      } else {
+        stats.validCount += 1;
+      }
+
+      if (stats.metricSamples.length < 5) {
+        stats.metricSamples.push({
+          id: measurement.ticket.id,
+          source: measurement.source,
+          rawMinutes: measurement.rawMinutes,
+          calendar: measurement.calendarMinutes,
+          business: measurement.businessMinutes,
+          seconds: measurement.secondsValue,
+          resolutionSource: measurement.resolutionSource,
+        });
+      }
+
+      return stats;
+    },
+    {
+      total: 0,
+      nullCount: 0,
+      zeroCount: 0,
+      validCount: 0,
+      sourceCounts: {} as Record<string, number>,
+      secondsCount: 0,
+      resolutionSourceCounts: {} as Record<string, number>,
+      nullSamples: [] as number[],
+      zeroSamples: [] as { id: number; rawMinutes: number | null }[],
+      metricSamples: [] as Array<{
+        id: number;
+        source: FirstReplyMetricSource;
+        rawMinutes: number | null;
+        calendar: number | null;
+        business: number | null;
+        seconds: number | null;
+        resolutionSource: string;
+      }>,
+    },
+  );
+
+  debug('FRT metric distribution', {
+    total: frtMetricStats.total,
+    nullCount: frtMetricStats.nullCount,
+    zeroOrNegativeCount: frtMetricStats.zeroCount,
+    validCount: frtMetricStats.validCount,
+    sourceCounts: frtMetricStats.sourceCounts,
+    resolutionSourceCounts: frtMetricStats.resolutionSourceCounts,
+    nullSamples: frtMetricStats.nullSamples,
+    zeroSamples: frtMetricStats.zeroSamples,
+    metricSamples: frtMetricStats.metricSamples,
+    secondsCount: frtMetricStats.secondsCount,
+  });
+
+  if (frtMetricStats.total > 0) {
+    const invalidRatio = (frtMetricStats.nullCount + frtMetricStats.zeroCount) / frtMetricStats.total;
+    if (invalidRatio >= 0.5) {
+      console.warn(
+        `[KPI Warning] first_reply_time_in_minutes 값이 ${Math.round(invalidRatio * 1000) / 10}% 티켓에서 null/0 입니다. Zendesk API 응답 또는 티켓 유형을 확인하세요.`,
+        {
+          nullCount: frtMetricStats.nullCount,
+          zeroCount: frtMetricStats.zeroCount,
+          total: frtMetricStats.total,
+        },
+      );
+    }
+  }
 
   const frtValuesMinutes = frtWindowMeasurements
     .map(measurement => measurement.minutes)
-    .filter((value): value is number => value !== null && value >= 0 && value <= 72 * 60);
+    .filter((value): value is number => value !== null && value > 0);
+
+  const frtValidTickets = frtWindowMeasurements.filter(m => typeof m.minutes === 'number' && m.minutes > 0);
+  debug('FRT window stats', {
+    frtWindowTicketCount: frtWindowTickets.length,
+    frtValidCount: frtValidTickets.length,
+    frtValidSample: frtValidTickets.slice(0, 10).map(m => ({
+      id: m.ticket.id,
+      minutes: m.minutes,
+      resolutionSource: m.resolutionSource,
+    })),
+    nullCount: frtMetricStats.nullCount,
+    zeroOrNegativeCount: frtMetricStats.zeroCount,
+    nullSamples: frtMetricStats.nullSamples,
+    zeroSamples: frtMetricStats.zeroSamples,
+    secondsCount: frtMetricStats.secondsCount,
+    resolutionSourceCounts: frtMetricStats.resolutionSourceCounts,
+  });
+
+  if (frtMetricStats.nullSamples.length > 0) {
+    const nullSampleTickets = frtMetricStats.nullSamples.slice(0, 10).map(id => frtWindowMeasurements.find(m => m.ticket.id === id));
+    console.debug('[KPI Debug] first_reply_time null sample metric_sets', nullSampleTickets
+      ?.filter(sample => sample && sample.ticket.metric_set)
+      .map(sample => ({
+        id: sample!.ticket.id,
+        metric_set: sample!.ticket.metric_set,
+        resolutionSource: sample!.resolutionSource,
+        first_reply_metric_components: sample!.ticket.first_reply_metric_components ?? sample!.resolutionComponents,
+      })));
+  }
 
   const frtDistribution = buildFRTDistribution(
     weekTickets,
-    weekTickets.map(ticket => ({ ticket, minutes: getFirstReplyMinutes(ticket) }))
+    weekTickets.map(ticket => {
+      const metricInfo = collectFirstReplyMetric(ticket);
+      return {
+        ticket,
+        minutes: metricInfo.minutes,
+        rawMinutes: metricInfo.rawMinutes,
+        source: metricInfo.source,
+        calendarMinutes: metricInfo.calendarMinutes,
+        businessMinutes: metricInfo.businessMinutes,
+        secondsValue: metricInfo.secondsValue,
+        resolutionSource: metricInfo.resolutionSource,
+        resolutionComponents: metricInfo.resolutionComponents,
+      };
+    })
   );
 
   const frtMedian = frtValuesMinutes.length > 0
@@ -160,10 +405,19 @@ export function calculateKPIsForWeek(
     .map(ticket => {
       const minutes = getResolutionMinutes(ticket);
       if (minutes === null) {
+        debug('AHT exclusion: missing resolution minutes', { id: ticket.id });
         return null;
       }
       const hours = minutes / 60;
-      return hours > 0 && hours <= MAX_AHT_HOURS ? hours : null;
+      if (hours <= 0) {
+        debug('AHT exclusion: non-positive duration', { id: ticket.id, hours });
+        return null;
+      }
+      if (hours > MAX_AHT_HOURS) {
+        debug('AHT exclusion: exceeds MAX_AHT_HOURS', { id: ticket.id, hours, maxHours: MAX_AHT_HOURS });
+        return null;
+      }
+      return hours;
     })
     .filter((value): value is number => value !== null);
 
@@ -175,6 +429,11 @@ export function calculateKPIsForWeek(
 
   // FCR Calculation (using same ticket set as AHT for consistency)
   const { fcrPercent, fcrBreakdown } = buildFCRMetrics(ahtTickets);
+  debug('FCR breakdown details', {
+    oneTouchCount: fcrBreakdown.oneTouch,
+    twoTouchCount: fcrBreakdown.twoTouch,
+    reopenedCount: fcrBreakdown.reopened,
+  });
   return {
     ticketsIn: weekTickets.length,
     ticketsResolved: resolvedTickets.length,
@@ -194,6 +453,13 @@ export function calculateKPIs(tickets: ZendeskTicket[], referenceDate: Date = ne
 type FRTMeasurement = {
   ticket: ZendeskTicket;
   minutes: number | null;
+  rawMinutes: number | null;
+  source: FirstReplyMetricSource;
+  calendarMinutes: number | null;
+  businessMinutes: number | null;
+  secondsValue: number | null;
+  resolutionSource: string;
+  resolutionComponents: FirstReplyMetricComponentsDetail | null;
 };
 
 function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMeasurement[]): FRTDistribution {
@@ -201,7 +467,8 @@ function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMea
   const repliedIds = new Set<number>();
 
   measurements.forEach(({ ticket, minutes }) => {
-    if (minutes === null || minutes <= 0) {
+    if (minutes === null || minutes < 0) {
+      debug('FRT exclusion: invalid minutes', { id: ticket.id, minutes });
       return;
     }
 
@@ -234,36 +501,56 @@ function buildFRTDistribution(weekTickets: ZendeskTicket[], measurements: FRTMea
 
 function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBreakdown: FCRBreakdown } {
   const breakdown: FCRBreakdown = { oneTouch: 0, twoTouch: 0, reopened: 0 };
-  
+  const oneTouchIds: number[] = [];
+  const twoTouchIds: number[] = [];
+  const reopenedIds: number[] = [];
+
   for (const ticket of tickets) {
-    const solvedAt = ticket.metric_set?.solved_at;
-    if (!solvedAt) continue;
-
-    // FCR 조건: 재오픈(reopens)이 0인 경우 FCR 성공
-    const isFCR = (ticket.metric_set?.reopens ?? 0) === 0;
-    const resolutionTime = getHoursBetween(ticket.created_at, solvedAt);
-    
-    if (resolutionTime === null) continue;
-
-    if (!isFCR) {
-      breakdown.reopened++;
-    } else if (resolutionTime <= FCR_ONE_TOUCH_HOURS) {
-      breakdown.oneTouch++;
-    } else if (resolutionTime <= FCR_TWO_TOUCH_HOURS) {
-      breakdown.twoTouch++;
-    } else {
-      // 72시간 초과지만 재오픈은 없는 경우
-      breakdown.twoTouch++;
+    const solvedAt = ticket.metric_set?.solved_at ?? ticket.solved_at ?? null;
+    if (!solvedAt) {
+      debug('FCR exclusion: missing solvedAt', { id: ticket.id, status: ticket.status });
+      continue;
     }
+
+    const reopens = ticket.metric_set?.reopens ?? ticket.reopens ?? 0;
+    if (reopens > 0) {
+      breakdown.reopened++;
+      reopenedIds.push(ticket.id);
+      continue;
+    }
+
+    const replies = ticket.metric_set?.replies ?? ticket.replies ?? null;
+    if (typeof replies === 'number') {
+      if (replies < 2) {
+        breakdown.oneTouch++;
+        oneTouchIds.push(ticket.id);
+      } else {
+        breakdown.twoTouch++;
+        twoTouchIds.push(ticket.id);
+      }
+      continue;
+    }
+
+    const touches = ticket.metric_set?.touches ?? null;
+    if (typeof touches === 'number') {
+      if (touches < 2) {
+        breakdown.oneTouch++;
+        oneTouchIds.push(ticket.id);
+      } else {
+        breakdown.twoTouch++;
+        twoTouchIds.push(ticket.id);
+      }
+      continue;
+    }
+
+    // Replies/touches unavailable: treat as multi-touch for conservative reporting
+    breakdown.twoTouch++;
+    twoTouchIds.push(ticket.id);
   }
 
   const totalFCR = breakdown.oneTouch + breakdown.twoTouch;
   const totalTickets = totalFCR + breakdown.reopened;
-  
-  // FCR% = (1차 + 2차 해결) / (1차 + 2차 + 재오픈) * 100
-  const fcrPercent = totalTickets > 0 
-    ? (totalFCR / totalTickets) * 100 
-    : 0;
+  const fcrPercent = totalTickets > 0 ? (breakdown.oneTouch / totalTickets) * 100 : 0;
 
   debug('FCR 계산 결과', {
     totalTickets,
@@ -271,6 +558,11 @@ function buildFCRMetrics(tickets: ZendeskTicket[]): { fcrPercent: number; fcrBre
     twoTouch: breakdown.twoTouch,
     reopened: breakdown.reopened,
     fcrPercent: roundTo(fcrPercent, 1) + '%'
+  });
+  debug('FCR ticket categorization', {
+    oneTouchIds: oneTouchIds.slice(0, 50),
+    twoTouchIds: twoTouchIds.slice(0, 50),
+    reopenedIds: reopenedIds.slice(0, 50),
   });
 
   return {

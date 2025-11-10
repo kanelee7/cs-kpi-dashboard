@@ -44,9 +44,9 @@ async function main() {
       return;
     }
 
-    // 3. 최근 5주(현재 주 포함) KPI 계산 및 저장
+    // 3. 최근 5개의 완료된 주에 대한 KPI 계산 및 저장 (현재 주 제외)
     const HISTORY_WEEKS = 5;
-    for (let offset = HISTORY_WEEKS - 1; offset >= 0; offset--) {
+    for (let offset = 1; offset <= HISTORY_WEEKS; offset++) {
       const { start: weekStart, end: weekEnd } = getWeekRange(offset);
       console.log(`Calculating KPIs for week ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
 

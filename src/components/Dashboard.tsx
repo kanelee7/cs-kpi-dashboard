@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
+import { getWeekRange, getZendeskWeekNumber } from '../../utils/dateUtils';
 
 interface KPIData {
   weeklyTicketsIn: number[];
@@ -166,20 +168,22 @@ const FCRBreakdownCard: React.FC<{ title: string; value: string; percentage: str
   );
 };
 
-const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: number[] }> = ({ title, inData, resolvedData }) => {
+const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: number[]; labels?: string[] }> = ({ title, inData, resolvedData, labels = [] }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const maxValue = Math.max(...inData, ...resolvedData);
-  
-  // Generate week labels for previous 4 weeks (excluding current week)
-  const currentDate = new Date();
-  const startDate = new Date(currentDate.getFullYear(), 0, 1);
-  const days = Math.floor((currentDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-  const currentWeek = Math.ceil((days + startDate.getDay() + 1) / 7);
-  const weeks = Array.from({length: 4}, (_, i) => `Week ${currentWeek - 4 + i}`).reverse();
-  
-  // Use last 4 weeks of data (excluding current week)
-  const compactInData = inData.slice(0, 4);
-  const compactResolvedData = resolvedData.slice(0, 4);
+  const totalPoints = Math.min(inData.length, resolvedData.length);
+  const sliceStart = Math.max(0, totalPoints - 4);
+  const compactInData = inData.slice(sliceStart, totalPoints);
+  const compactResolvedData = resolvedData.slice(sliceStart, totalPoints);
+
+  const compactLabels = labels.length > 0
+    ? labels.slice(sliceStart, sliceStart + compactInData.length)
+    : Array.from({ length: compactInData.length }, (_, index) => {
+        const offset = compactInData.length - index;
+        const { start } = getWeekRange(offset);
+        return `Week ${getZendeskWeekNumber(start)}`;
+      });
+
+  const maxValue = Math.max(1, ...compactInData, ...compactResolvedData);
 
   return (
     <div className="bg-[#232424] rounded-xl p-4 shadow-lg mt-4">
@@ -195,7 +199,7 @@ const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: nu
               onMouseLeave={() => setHoveredIndex(null)}
               tabIndex={0}
               role="button"
-              aria-label={`Week ${weeks[index]}: ${inValue} tickets in, ${resolvedValue} resolved`}
+              aria-label={`${compactLabels[index] ?? `Week ${index + 1}`}: ${inValue} tickets in, ${resolvedValue} resolved`}
             >
               {hoveredIndex === index && (
                 <div className="absolute -top-16 bg-[rgba(35,36,36,0.9)] text-white text-[13px] px-3 py-2 rounded-lg whitespace-nowrap z-20 shadow-2xl border border-[rgba(255,255,255,0.1)] backdrop-blur-sm tooltip-enter">
@@ -232,7 +236,7 @@ const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: nu
                 />
               </div>
               <span className="text-xs text-gray-500">
-                {weeks[index]}
+                {compactLabels[index] ?? `Week ${index + 1}`}
               </span>
             </div>
           );
@@ -252,7 +256,7 @@ const CompactChart: React.FC<{ title: string; inData: number[]; resolvedData: nu
   );
 };
 
-const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?: string }> = ({ title, data, color, unit = '' }) => {
+const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?: string; labels?: string[] }> = ({ title, data, color, unit = '', labels = [] }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [dimensions, setDimensions] = useState({ width: 320, height: 120 });
@@ -275,24 +279,25 @@ const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?
     return () => observer.disconnect();
   }, []);
   
-  // Ensure we have data to display
-  const chartData = [...(data || [])].reverse().slice(0, 4); // Reverse to show oldest to newest
-  
+  const trimmedData = [...(data || [])];
+  const maxPoints = Math.min(5, trimmedData.length || 5);
+  const chartData = trimmedData.slice(-maxPoints);
+
   if (chartData.length === 0) {
-    chartData.push(0, 0, 0, 0); // Default to zeros if no data
+    chartData.push(0, 0, 0, 0, 0);
   }
-  
-  // Calculate min and max values with some padding
-  const minValue = Math.max(0, Math.min(...chartData) * 0.9); // 10% padding below min
-  const maxValue = Math.max(...chartData) * 1.1; // 10% padding above max
-  const range = maxValue - minValue || 1; // Prevent division by zero
-  
-  // Generate week labels in correct order (oldest to newest)
-  const currentDate = new Date();
-  const startDate = new Date(currentDate.getFullYear(), 0, 1);
-  const days = Math.floor((currentDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-  const currentWeek = Math.ceil((days + startDate.getDay() + 1) / 7);
-  const weeks = Array.from({length: 4}, (_, i) => `Week ${currentWeek - 4 + i}`).reverse();
+
+  const minValue = Math.max(0, Math.min(...chartData) * 0.9);
+  const maxValue = Math.max(...chartData) * 1.1;
+  const range = maxValue - minValue || 1;
+
+  const effectiveLabels = labels.length > 0
+    ? labels.slice(-chartData.length)
+    : Array.from({ length: chartData.length }, (_, index) => {
+        const offset = chartData.length - index;
+        const { start } = getWeekRange(offset);
+        return `Week ${getZendeskWeekNumber(start)}`;
+      });
   
   // Calculate y-axis ticks
   const yAxisTicks = 5;
@@ -381,8 +386,8 @@ const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?
           })}
 
           {/* X-axis labels */}
-          {weeks.map((week, index) => (
-            <text key={week} x={computeX(index)} y={CHART_BOTTOM + 15} fill="#9CA3AF" fontSize="10" textAnchor="middle">
+          {effectiveLabels.map((week, index) => (
+            <text key={`${week}-${index}`} x={computeX(index)} y={CHART_BOTTOM + 15} fill="#9CA3AF" fontSize="10" textAnchor="middle">
               {week}
             </text>
           ))}
@@ -397,7 +402,7 @@ const TrendChart: React.FC<{ title: string; data: number[]; color: string; unit?
             }}
           >
             <div className="flex items-center">
-              <span className="text-[#CCCCCC] mr-2">{weeks[hoveredIndex]}:</span>
+              <span className="text-[#CCCCCC] mr-2">{effectiveLabels[hoveredIndex]}:</span>
               <span className="text-[#5CD6C0] font-bold">{chartData[hoveredIndex]}{unit}</span>
             </div>
           </div>
@@ -418,14 +423,12 @@ const FRTDistributionChart: React.FC = () => {
   const [hoveredCategory, setHoveredCategory] = useState<number | null>(null);
   
   // Get current week number (1-52)
-  const currentDate = new Date();
-  const startDate = new Date(currentDate.getFullYear(), 0, 1);
-  const days = Math.floor((currentDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-  const currentWeek = Math.ceil((days + startDate.getDay() + 1) / 7);
-  
-  // Generate week labels for previous 4 weeks (oldest to newest)
-  const weeks = Array.from({length: 4}, (_, i) => `Week ${currentWeek - 4 + i}`).reverse();
-  
+  const weeks = Array.from({length: 4}, (_, i) => {
+    const offset = 4 - i;
+    const { start } = getWeekRange(offset);
+    return `Week ${getZendeskWeekNumber(start)}`;
+  });
+
   const categories: TimeBracket[] = ['0-1h', '1-8h', '8-24h', '>24h', 'No Reply'];
   const colors = ['#4FBDBA', '#F3C969', '#F47C7C', '#8B5CF6', '#6B7280'];
   
@@ -622,6 +625,10 @@ const Sidebar: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, o
               <span>VOC Dashboard</span>
             </a>
             <div className="border-t border-gray-700 mt-6 pt-6">
+              <Link href="/embed-chart" className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-[#282929]">
+                <BarChart3 className="w-5 h-5" />
+                <span>EmbedChart</span>
+              </Link>
               <a href="#" className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-[#282929]">
                 <Settings className="w-5 h-5" />
                 <span>Settings</span>
@@ -926,6 +933,7 @@ export default function Dashboard() {
                   title="Weekly Tickets: In vs Resolved (Last 5 Weeks)"
                   inData={kpiData?.weeklyTicketsIn || []}
                   resolvedData={kpiData?.weeklyTicketsResolved || []}
+                  labels={kpiData?.weeklyLabels || []}
                 />
               </div>
             ) : (
@@ -1051,6 +1059,7 @@ export default function Dashboard() {
                     data={kpiData?.trends?.frt || []} 
                     color="#4FBDBA" 
                     unit="h"
+                    labels={kpiData?.weeklyLabels || []}
                   />
                   <FRTDistributionChart />
                 </div>
@@ -1062,12 +1071,14 @@ export default function Dashboard() {
                     data={kpiData?.trends?.aht || []} 
                     color="#F3C969" 
                     unit="min"
+                    labels={kpiData?.weeklyLabels || []}
                   />
                   <TrendChart 
                     title="First Contact Resolution %" 
                     data={kpiData?.trends?.fcr || []} 
                     color="#4FBDBA" 
                     unit="%"
+                    labels={kpiData?.weeklyLabels || []}
                   />
                 </div>
               </div>
