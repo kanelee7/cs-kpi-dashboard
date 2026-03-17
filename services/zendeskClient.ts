@@ -493,7 +493,7 @@ export class ZendeskClient {
     let nextPageUrl: string | null = `${this.baseUrl}/tickets/${ticketId}/comments.json?per_page=100`;
 
     while (nextPageUrl && collected.length < ZendeskClient.MAX_TICKET_COMMENTS) {
-      const data = await this.fetchJson<ZendeskCommentsResponse>(nextPageUrl);
+      const data: ZendeskCommentsResponse = await this.fetchJson<ZendeskCommentsResponse>(nextPageUrl);
       const comments = data.comments ?? [];
       for (const c of comments) {
         if (collected.length >= ZendeskClient.MAX_TICKET_COMMENTS) break;
