@@ -38,6 +38,8 @@ export interface ZendeskTicket {
   created_at: string;
   updated_at: string;
   status: string;
+  brand?: string | null;
+  brand_id?: number | null;
   solved_at: string | null;
   requester_id: number;
   assignee_id: number | null;
@@ -482,4 +484,50 @@ export class ZendeskClient {
       return null;
     }
   }
+
+  /** Minimal comment shape for ticket conversation (no html_body). Max 100 comments. */
+  static readonly MAX_TICKET_COMMENTS = 100;
+
+  async getTicketComments(ticketId: number): Promise<ZendeskTicketComment[]> {
+    const collected: ZendeskTicketComment[] = [];
+    let nextPageUrl: string | null = `${this.baseUrl}/tickets/${ticketId}/comments.json?per_page=100`;
+
+    while (nextPageUrl && collected.length < ZendeskClient.MAX_TICKET_COMMENTS) {
+      const data = await this.fetchJson<ZendeskCommentsResponse>(nextPageUrl);
+      const comments = data.comments ?? [];
+      for (const c of comments) {
+        if (collected.length >= ZendeskClient.MAX_TICKET_COMMENTS) break;
+        collected.push({
+          plain_body: c.plain_body ?? c.body ?? '',
+          author_id: c.author_id ?? null,
+          created_at: c.created_at ?? '',
+          public: c.public ?? true,
+        });
+      }
+      nextPageUrl = data.next_page ?? null;
+      if (nextPageUrl && collected.length < ZendeskClient.MAX_TICKET_COMMENTS) {
+        await this.sleep(this.delayMs);
+      }
+    }
+
+    return collected;
+  }
+}
+
+export interface ZendeskTicketComment {
+  plain_body: string;
+  author_id: number | null;
+  created_at: string;
+  public: boolean;
+}
+
+interface ZendeskCommentsResponse {
+  comments?: Array<{
+    plain_body?: string | null;
+    body?: string | null;
+    author_id?: number | null;
+    created_at?: string | null;
+    public?: boolean;
+  }>;
+  next_page?: string | null;
 }

@@ -2,8 +2,8 @@ name: KPI Sync
 
 on:
   schedule:
-    # Run every Tuesday and Friday at 10:00 AM KST (01:00 UTC)
-    - cron: '0 1 * * 2,5'
+    # Run every Tuesday and Saturday at 10:00 AM KST (01:00 UTC)
+    - cron: '0 1 * * 2,6'
   workflow_dispatch:
 
 jobs:
@@ -33,10 +33,11 @@ jobs:
           ZENDESK_SUBDOMAIN: ${{ secrets.ZENDESK_SUBDOMAIN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # 환경 변수 확인
           if [ -z "$ZENDESK_EMAIL" ] || [ -z "$ZENDESK_API_TOKEN" ] || [ -z "$ZENDESK_SUBDOMAIN" ] || \
-             [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+             [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] || [ -z "$OPENAI_API_KEY" ]; then
             echo "Error: Required environment variables are not set." >&2
             echo "Please check the following environment variables:" >&2
             echo "- ZENDESK_EMAIL" >&2
@@ -44,20 +45,21 @@ jobs:
             echo "- ZENDESK_SUBDOMAIN" >&2
             echo "- SUPABASE_URL" >&2
             echo "- SUPABASE_SERVICE_ROLE_KEY" >&2
+            echo "- OPENAI_API_KEY" >&2
             exit 1
           fi
 
-          # KPI 동기화 스크립트 실행
-          echo "Starting KPI sync..."
-          npx ts-node --transpile-only scripts/sync-kpi.ts
+          # Precompute 동기화 스크립트 실행
+          echo "Starting metrics precompute sync..."
+          npx ts-node --transpile-only scripts/sync-metrics.ts
           
           # 실행 결과 확인
           if [ $? -ne 0 ]; then
-            echo "Error: KPI sync failed" >&2
+            echo "Error: metrics precompute sync failed" >&2
             exit 1
           fi
           
-          echo "KPI sync completed successfully"
+          echo "metrics precompute sync completed successfully"
 
       - name: Notify Slack on failure
         if: failure()

@@ -1,0 +1,51 @@
+# Leadership KPI Dashboard Implementation Plan
+
+Proposed structure and implementation details for the high-level executive dashboard.
+
+## Goal
+Build a strategic "Decision Support Tool" for leadership focusing on:
+1. **CS Health**: Operational Stability (Resolution, Quality, Speed).
+2. **Business Impact**: Correlation between CS and Growth/Revenue.
+    - *Metric 1*: **Ticket Growth vs MAU Growth Ratio** (Efficiency/Scalability).
+    - *Metric 2*: **Payment Issue Rate vs Refund Rate** (Retention risk).
+3. **Structural Trend**: Macro-level shifts and update impacts.
+
+## Proposed Changes
+
+### [Component] [LeadershipDashboard](file:///d:/Projects/cs-kpi-dashboard/components/LeadershipDashboard.tsx) [NEW]
+- Create a new high-level component that implements the 5-part structure proposed.
+- **Impact Narrative**: include 2-3 line executive summaries for each section to provide context beyond the numbers.
+- **Recommended Executive Actions**: Final section dedicated to organizational leverage points.
+- Integrated Sparkline charts for quick trend visualization.
+
+### [Page] [leadership/page.tsx](file:///d:/Projects/cs-kpi-dashboard/app/leadership/page.tsx) [NEW]
+- Entry point for the leadership dashboard.
+- Wrap in the existing [AppLayout](file:///d:/Projects/cs-kpi-dashboard/components/AppLayout.tsx#187-198).
+
+### [Services] [kpiService.ts](file:///d:/Projects/cs-kpi-dashboard/services/kpiService.ts) [MODIFY]
+- **Risk Indicators (Hierarchy)**:
+    - **Primary (Trend)**: Period-over-period change rate (>30% Yellow, >50% Red).
+    - **Critical Override (Absolute)**:
+        - FRT > 12h = Critical Red.
+        - Reopen Rate > 15% = Critical Red.
+        - Resolution < 60% = Critical Red.
+- **Health Score Normalization & Alerting**:
+    - **Formula**: Linear (Resolution), Inverted (Reopen), Inverted Log (FRT).
+    - **Cap/Floor**: All sub-metrics capped at 100, floored at 0.
+    - **Volatility Alert**: If Composite Index shifts >15 pts MoM, trigger a "High Volatility" visual alert (e.g., "⚠ Rapid Shift Detected").
+
+## Data Modeling & Logic
+- **Health Score**: Derived from [supabase-kpi-schema.sql](file:///d:/Projects/cs-kpi-dashboard/supabase-kpi-schema.sql) using the weighted composite index + Volatility Alert logic.
+- **Business Impact calculation**:
+    - **Scalability (Elasticity Index)**: `% Ticket Change - % MAU Growth`.
+        - *Guide*: `~0` = Neutral, [(+)](file:///d:/Projects/cs-kpi-dashboard/pages/_app.tsx#4-7) = Growth Risk, [(-)](file:///d:/Projects/cs-kpi-dashboard/pages/_app.tsx#4-7) = High Efficiency.
+    - **Efficiency**: `Tickets per 1,000 MAU` as a secondary tracking metric.
+    - **Retention Risk (Signal Detection)**: Correlation of `Payment Ticket Surge` vs `Refund/Churn Flags`.
+        - *Standard*: 3-month rolling window (minimum n ≥ 6 data points required).
+        - *Display*: Pearson's r-coefficient with Confidence status.
+
+## Verification Plan
+### Manual Verification
+- **Executive Ready Check**: 10s comprehension test, <10 numbers per view, max 3 scrolls on mobile.
+- Verify that the layout is "Executive Ready" (clean, high contrast, key insights first).
+- Check data consistency between standard dashboard and leadership dashboard.

@@ -26,6 +26,8 @@ npm install
 ZENDESK_SUBDOMAIN=your-subdomain
 ZENDESK_EMAIL=agent@example.com
 ZENDESK_API_TOKEN=your-zendesk-api-token
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```

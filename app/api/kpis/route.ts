@@ -165,11 +165,11 @@ export async function GET(request: Request) {
     console.log(`Fetching KPI data for brand: ${brand}`)
 
     // Initialize Supabase client
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseKey) {
-      console.log('Supabase credentials not configured, returning sample data')
+      console.log('Supabase credentials not fully configured (URL or Key missing), returning sample data')
       return NextResponse.json(getSampleData(brand))
     }
 
@@ -286,7 +286,7 @@ function getSampleData(brand: string) {
         reopened: 119
       }
     },
-    'brand-a': {
+    'league-of-kingdoms': {
       ticketsIn: 312,
       ticketsResolved: 298,
       frtMedian: 2.1,
@@ -305,7 +305,7 @@ function getSampleData(brand: string) {
         reopened: 8
       }
     },
-    'brand-b': {
+    'lok-chronicle': {
       ticketsIn: 289,
       ticketsResolved: 275,
       frtMedian: 2.6,
@@ -324,7 +324,7 @@ function getSampleData(brand: string) {
         reopened: 15
       }
     },
-    'brand-c': {
+    'lok-hunters': {
       ticketsIn: 267,
       ticketsResolved: 254,
       frtMedian: 2.8,
@@ -343,7 +343,7 @@ function getSampleData(brand: string) {
         reopened: 12
       }
     },
-    'brand-d': {
+    'arena-z': {
       ticketsIn: 201,
       ticketsResolved: 192,
       frtMedian: 2.3,
@@ -362,7 +362,7 @@ function getSampleData(brand: string) {
         reopened: 7
       }
     },
-    'brand-e': {
+    'the-new-order': {
       ticketsIn: 178,
       ticketsResolved: 170,
       frtMedian: 2.5,

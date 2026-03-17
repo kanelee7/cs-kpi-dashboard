@@ -19,15 +19,23 @@ function computeYAxis(stepCount: number, values: number[]): number[] {
   return Array.from({ length: stepCount }, (_, index) => step * index);
 }
 
+import { useRouter } from "next/router";
+
 export default function EmbedChartPage(): JSX.Element {
+  const router = useRouter();
+  const { brand } = router.query;
+
   const [data, setData] = useState<WeeklyKPIResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!router.isReady) return;
+
     const fetchData = async () => {
       try {
-        const response = await fetch("/api/kpis");
+        const brandParam = brand ? `?brand=${encodeURIComponent(brand as string)}` : "";
+        const response = await fetch(`/api/kpis${brandParam}`);
         const payload = await response.json();
         setData({
           weeklyTicketsIn: payload.weeklyTicketsIn ?? [],
@@ -43,7 +51,7 @@ export default function EmbedChartPage(): JSX.Element {
     };
 
     fetchData();
-  }, []);
+  }, [brand, router.isReady]);
 
   const chartData = useMemo(() => {
     if (!data) {
@@ -99,10 +107,10 @@ export default function EmbedChartPage(): JSX.Element {
                 preserveAspectRatio="xMidYMid meet"
               >
                 <rect x="0" y="0" width={svgWidth} height={svgHeight} fill="transparent" />
-                
+
                 {/* Y축 */}
                 <line x1={xAxisLeft} y1={yAxisTop} x2={xAxisLeft} y2={yAxisBottom} stroke="#374151" strokeWidth="2" />
-                
+
                 {/* X축 */}
                 <line x1={xAxisLeft} y1={yAxisBottom} x2={xAxisRight} y2={yAxisBottom} stroke="#374151" strokeWidth="2" />
 
@@ -138,22 +146,22 @@ export default function EmbedChartPage(): JSX.Element {
                 {chartData.inValues.map((inValue, index) => {
                   const resolvedValue = chartData.resolvedValues[index] ?? 0;
                   const label = chartData.labels[index] ?? "";
-                  
+
                   // 위치 계산
                   const totalGroups = chartData.labels.length;
                   const chartWidth = xAxisRight - xAxisLeft;
                   const groupWidth = chartWidth / totalGroups;
                   const centerX = xAxisLeft + (index + 0.5) * groupWidth;
-                  
+
                   // 바 크기 계산
                   const barWidth = Math.min(50, groupWidth / 3);
                   const barSpacing = 4;
-                  
+
                   // 높이 계산
                   const safeMax = chartData.maxAxisValue === 0 ? 1 : chartData.maxAxisValue;
                   const inHeight = Math.max(0, (inValue / safeMax) * yDrawHeight);
                   const resolvedHeight = Math.max(0, (resolvedValue / safeMax) * yDrawHeight);
-                  
+
                   // 둥근 모서리 반경
                   const cornerRadiusIn = inHeight > 0 ? Math.min(8, barWidth / 2) : 0;
                   const cornerRadiusResolved = resolvedHeight > 0 ? Math.min(8, barWidth / 2) : 0;
@@ -188,7 +196,7 @@ export default function EmbedChartPage(): JSX.Element {
                       >
                         {Math.round(inValue)}
                       </text>
-                      
+
                       {/* Resolved - Yellow (오른쪽) */}
                       <rect
                         x={centerX + barSpacing / 2}
@@ -212,13 +220,13 @@ export default function EmbedChartPage(): JSX.Element {
                       >
                         {Math.round(resolvedValue)}
                       </text>
-                      
+
                       {/* X축 라벨 */}
-                      <text 
-                        x={centerX} 
+                      <text
+                        x={centerX}
                         y={yAxisBottom + 28}
-                        fill="#9CA3AF" 
-                        fontSize="16" 
+                        fill="#9CA3AF"
+                        fontSize="16"
                         textAnchor="middle"
                         style={{ fill: '#9CA3AF' }}
                       >
@@ -234,9 +242,9 @@ export default function EmbedChartPage(): JSX.Element {
             <div className="flex flex-wrap items-center justify-center gap-6 px-8 pb-6 pt-1">
               {LEGEND_ITEMS.map(item => (
                 <div key={item.label} className="flex items-center gap-2 text-sm text-gray-300">
-                  <span 
+                  <span
                     className="block h-3 w-3 rounded"
-                    style={{ 
+                    style={{
                       backgroundColor: item.color,
                       minWidth: '12px',
                       minHeight: '12px'
