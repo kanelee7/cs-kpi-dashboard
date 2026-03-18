@@ -110,7 +110,7 @@ function healthToNarrative(health: HealthScoreResult | null): string {
   }
 
   if (health.criticalOverrides.frtCritical) {
-    pieces.push('First response time has breached the 12h critical threshold, indicating structural staffing or routing gaps.');
+    pieces.push('First response time has breached the 24h critical threshold, indicating structural staffing or routing gaps.');
   }
   if (health.criticalOverrides.reopenCritical) {
     pieces.push('Reopen rate is above 15%, suggesting quality and policy alignment issues in frontline resolutions.');
@@ -344,10 +344,10 @@ export default function LeadershipDashboard() {
             </div>
 
             {health ? (
-              <div className="grid flex-1 gap-3 text-xs md:grid-cols-3">
-                <div className="rounded-lg border border-gray-700 bg-[#1d1f20] p-3">
+              <div className="grid flex-1 gap-3 text-xs md:grid-cols-3 min-w-0 overflow-hidden">
+                <div className="rounded-lg border border-gray-700 bg-[#1d1f20] p-3 min-w-0">
                   <div className="mb-1 flex items-center justify-between">
-                    <span className="font-medium text-gray-200">Resolution</span>
+                    <span className="font-medium text-gray-200 truncate min-w-0">Resolution</span>
                     <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
                   </div>
                   <div className="mb-1 text-lg font-semibold text-white">
@@ -357,9 +357,9 @@ export default function LeadershipDashboard() {
                     Linear contribution into the index. Below 60% is treated as a critical red override.
                   </p>
                 </div>
-                <div className="rounded-lg border border-gray-700 bg-[#1d1f20] p-3">
+                <div className="rounded-lg border border-gray-700 bg-[#1d1f20] p-3 min-w-0">
                   <div className="mb-1 flex items-center justify-between">
-                    <span className="font-medium text-gray-200">Reopen Rate</span>
+                    <span className="font-medium text-gray-200 truncate min-w-0">Reopen Rate</span>
                     <TrendingDown className="h-3.5 w-3.5 text-emerald-400" />
                   </div>
                   <div className="mb-1 text-lg font-semibold text-white">
@@ -369,16 +369,16 @@ export default function LeadershipDashboard() {
                     Inverted contribution. Above 15% is treated as a critical red override.
                   </p>
                 </div>
-                <div className="rounded-lg border border-gray-700 bg-[#1d1f20] p-3">
+                <div className="rounded-lg border border-gray-700 bg-[#1d1f20] p-3 min-w-0">
                   <div className="mb-1 flex items-center justify-between">
-                    <span className="font-medium text-gray-200">FRT Median</span>
+                    <span className="font-medium text-gray-200 truncate min-w-0">FRT Median</span>
                     <BarChart3 className="h-3.5 w-3.5 text-emerald-400" />
                   </div>
                   <div className="mb-1 text-lg font-semibold text-white">
                     {health.subMetrics.frtHours.toFixed(1)}h
                   </div>
                   <p className="text-[11px] text-gray-400">
-                    Inverted log contribution. &gt; 12h is a critical red override on the composite.
+                    Inverted log contribution. &gt; 24h is a critical red override on the composite.
                   </p>
                 </div>
               </div>
@@ -458,7 +458,7 @@ export default function LeadershipDashboard() {
                 {health ? `${health.subMetrics.frtHours.toFixed(1)}h` : '--'}
               </div>
               <p className="text-[11px] text-gray-400">
-                Log-normalized into the health score. Spikes above 12h are treated as critical structural risk.
+                Log-normalized into the health score. Spikes above 24h are treated as critical structural risk.
               </p>
             </CardContent>
           </Card>
@@ -624,7 +624,7 @@ export default function LeadershipDashboard() {
             <div className="flex items-start gap-2">
               <ArrowRight className="mt-0.5 h-3.5 w-3.5 text-[#4FBDBA]" />
               <p>
-                If FRT is in a critical red band (&gt; 12h), prioritize a time‑boxed staffing and routing review for{' '}
+                If FRT is in a critical red band (&gt; 24h), prioritize a time‑boxed staffing and routing review for{' '}
                 <span className="font-semibold">top 2 VOC themes</span> where slow response amplifies churn risk.
               </p>
             </div>

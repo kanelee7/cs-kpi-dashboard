@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { BarChart3, FileText, LayoutDashboard, LogOut, Menu, Settings, Users, X } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { normalizeBrandId } from '@/services/brandResolver';
+import { CompactModeProvider, useCompactMode } from '@/context/CompactModeContext';
 
 const SIDEBAR_W = 260;
 
@@ -29,6 +30,50 @@ function SearchParamsSync({ onBrand }: { onBrand: (b: string | null) => void }) 
     return null;
 }
 
+function HeaderRightControls({
+    brand,
+    onBrandChange,
+    pathname,
+}: {
+    brand: string | null;
+    onBrandChange: (next: string | null) => void;
+    pathname: string | null;
+}) {
+    const { isCompact, toggleCompact } = useCompactMode();
+    const showCompactToggle = pathname === '/dashboard/overview';
+
+    return (
+        <div className="flex items-center gap-3">
+            {showCompactToggle && (
+                <button
+                    onClick={toggleCompact}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${isCompact
+                        ? 'bg-[#4FBDBA] text-white'
+                        : 'bg-[#232424] text-gray-300 hover:text-white border border-gray-700/50'
+                        }`}
+                >
+                    {isCompact ? 'Full View' : 'Compact Mode'}
+                </button>
+            )}
+            <select
+                value={brand ?? 'ALL'}
+                onChange={e => {
+                    const next = e.target.value;
+                    const nextBrand = next === 'ALL' ? null : next;
+                    onBrandChange(nextBrand);
+                }}
+                className="bg-[#282929] text-white px-4 py-2 rounded-lg border border-gray-700/50 focus:border-[#4FBDBA] focus:outline-none text-sm"
+            >
+                {BRAND_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                    </option>
+                ))}
+            </select>
+        </div>
+    );
+}
+
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
@@ -38,6 +83,14 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
     const handleBrand = useCallback((b: string | null) => {
         setBrand(b);
     }, []);
+
+    const handleBrandChange = useCallback(
+        (nextBrand: string | null) => {
+            setBrand(nextBrand);
+            router.replace(withBrand(pathname || '/dashboard', nextBrand));
+        },
+        [pathname, router],
+    );
 
     function withBrand(path: string, b: string | null): string {
         if (!b) return path;
@@ -120,6 +173,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
     );
 
     return (
+        <CompactModeProvider>
         <div className="min-h-screen bg-[#282929] text-white">
             {/* Sync brand from URL without causing Suspense cascade on the whole layout */}
             <Suspense fallback={null}>
@@ -169,22 +223,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
                             <Menu className="w-6 h-6" />
                         </button>
                         <div className="hidden lg:block" />
-                        <select
-                            value={brand ?? 'ALL'}
-                            onChange={e => {
-                                const next = e.target.value;
-                                const nextBrand = next === 'ALL' ? null : next;
-                                setBrand(nextBrand);
-                                router.replace(withBrand(pathname || '/dashboard', nextBrand));
-                            }}
-                            className="bg-[#282929] text-white px-4 py-2 rounded-lg border border-gray-700/50 focus:border-[#4FBDBA] focus:outline-none text-sm"
-                        >
-                            {BRAND_OPTIONS.map(opt => (
-                                <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                </option>
-                            ))}
-                        </select>
+                        <HeaderRightControls brand={brand} onBrandChange={handleBrandChange} pathname={pathname} />
                     </div>
                 </header>
 
@@ -192,6 +231,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
                 <main className="flex-1 p-6">{children}</main>
             </div>
         </div>
+        </CompactModeProvider>
     );
 }
 

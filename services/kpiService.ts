@@ -83,6 +83,7 @@ export function calculateReopenRate(payload: TicketOverviewCachePayload): number
 export function calculateSubMetrics(payload: TicketOverviewCachePayload): HealthSubMetrics {
   const resolutionRate = calculateResolutionRate(payload);
   const reopenRate = calculateReopenRate(payload);
+  // FRT source confirmed: payload.frtMedian (hours) — no conversion applied
   const frtHours = typeof payload.frtMedian === 'number' ? Math.max(payload.frtMedian, 0) : 0;
 
   return {
