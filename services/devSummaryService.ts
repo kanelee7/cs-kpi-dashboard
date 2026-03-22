@@ -296,7 +296,8 @@ export async function getCachedOpenTicketDevSummaries(options?: {
     .order('last_updated', { ascending: false })
     .limit(limit);
 
-  if (brand) {
+  // `normalizeBrandId('all')` is `'all'` — must not filter; cache rows use canonical brands only
+  if (brand && brand !== 'all') {
     query = query.eq('brand', brand);
   }
 
