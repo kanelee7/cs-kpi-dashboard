@@ -189,6 +189,28 @@ export async function getLatestTicketOverviewSnapshot(
   return fallback.data as TicketOverviewSnapshotRow | null;
 }
 
+function snapshotGeneratedMs(row: TicketOverviewSnapshotRow): number {
+  const raw = row.generated_at ?? row.calculated_at;
+  if (typeof raw !== 'string') return 0;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** One row per brand (latest by generated_at). Avoids double-counting if duplicate brand rows exist. */
+function dedupeTicketOverviewSnapshotsByBrand(rows: TicketOverviewSnapshotRow[]): TicketOverviewSnapshotRow[] {
+  const latestByBrand = new Map<string, TicketOverviewSnapshotRow>();
+  for (const snap of rows) {
+    const raw = snap.brand;
+    const brand = typeof raw === 'string' ? raw.trim() : '';
+    if (!brand || brand.toLowerCase() === 'all') continue;
+    const prev = latestByBrand.get(brand);
+    if (!prev || snapshotGeneratedMs(snap) >= snapshotGeneratedMs(prev)) {
+      latestByBrand.set(brand, snap);
+    }
+  }
+  return Array.from(latestByBrand.values());
+}
+
 export async function getAllBrandsAggregatedTicketOverview(
   client?: SupabaseClient,
 ): Promise<TicketOverviewSnapshotRow | null> {
@@ -202,11 +224,14 @@ export async function getAllBrandsAggregatedTicketOverview(
   if (!data || data.length === 0) return null;
 
   const snapshots = data as TicketOverviewSnapshotRow[];
-  const payloads = snapshots
+  const dedupedSnapshots = dedupeTicketOverviewSnapshotsByBrand(snapshots);
+  if (dedupedSnapshots.length === 0) return null;
+
+  const payloads = dedupedSnapshots
     .map(s => s.payload as TicketOverviewCachePayload | undefined)
     .filter((p): p is TicketOverviewCachePayload => !!p);
 
-  if (payloads.length === 0) return snapshots[0];
+  if (payloads.length === 0) return dedupedSnapshots[0];
 
   const ticketsIn = payloads.reduce((s, p) => s + (p.ticketsIn ?? 0), 0);
   const ticketsResolved = payloads.reduce((s, p) => s + (p.ticketsResolved ?? 0), 0);
@@ -285,8 +310,10 @@ export async function getAllBrandsAggregatedTicketOverview(
     trends,
   };
 
+  const metaRow = [...dedupedSnapshots].sort((a, b) => snapshotGeneratedMs(b) - snapshotGeneratedMs(a))[0];
+
   return {
-    ...snapshots[0],
+    ...metaRow,
     brand: 'all',
     payload: aggregatedPayload,
   };

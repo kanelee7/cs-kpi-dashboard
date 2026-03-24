@@ -136,6 +136,8 @@ async function backfillKoreanSummaries(
             'Korean output must include Hangul characters',
             'One sentence per ticket',
             'Preserve technical entities like UID, TXH, wallet addresses',
+            'Preserve thread metadata like "Re:" prefixes and bracket tokens like "[3MERGED]" exactly as-is (do not translate)',
+            'Preserve email addresses, handles, and hashes exactly as-is (do not translate inside them)',
             'No additional commentary',
           ],
           items: missing.map(item => ({ ticketId: item.ticketId, oneLineSummary: item.oneLineSummary })),
@@ -171,7 +173,7 @@ async function translateOneLineToKorean(client: OpenAI, model: string, english: 
       {
         role: 'system',
         content:
-          'Translate the given issue summary into natural Korean. Keep technical IDs unchanged. Return only the translated sentence.',
+          'Translate the given issue summary into natural Korean. Keep technical IDs unchanged. Preserve thread metadata like "Re:" prefixes and bracket tokens like "[3MERGED]" exactly as-is (do not translate). Preserve email addresses, handles, and hashes exactly as-is (do not translate inside them). Return only the translated sentence.',
       },
       { role: 'user', content: english },
     ],
@@ -321,7 +323,7 @@ export async function generateDevSummariesBatch(
   }));
 
   const userPrompt = JSON.stringify({
-    task: 'Generate one-line issue summaries for each ticket in English and Korean. Use the "context" field (description and optionally latest internal note or public reply) when provided.',
+    task: 'Generate one-line issue summaries for each ticket in English and Korean. Use only the "context" field for the issue content; treat "subject" as an identifier only.',
     outputShape: [
       {
         ticketId: 'number',
@@ -335,6 +337,9 @@ export async function generateDevSummariesBatch(
       'Do not add diagnostics or remediation steps',
       'Avoid hallucinating IDs or account details',
       'Keep both summaries semantically equivalent',
+      'Do not include or translate thread metadata like "Re:" prefixes or bracket tokens like "[3MERGED]" in oneLineSummaryKo; preserve them as-is if they appear in context',
+      'Preserve email addresses, handles, and hashes exactly as-is (do not translate inside them)',
+      'If the subject contains only thread metadata (e.g., Re + brackets + email), ignore it and summarize only from the context field',
       'oneLineSummaryKo must be written in Korean with Hangul characters',
       'Prefer Korean support-ops wording (concise and actionable)',
     ],
